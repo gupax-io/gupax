@@ -54,6 +54,7 @@ It is intended for end users and offers a friendly and easy user experience, whi
 
 ### Video guide
 See a 3-minute video guide on how to set-up Gupax
+
 https://user-images.githubusercontent.com/101352116/207978455-6ffdc0cc-204c-4594-9a2f-e10c505745bc.mp4
 
 More recent video by Anti MoonBoy:
