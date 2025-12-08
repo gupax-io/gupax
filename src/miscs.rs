@@ -196,8 +196,8 @@ pub fn client() -> ClientWithMiddleware {
     reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
         .with(reqwest_retry::RetryTransientMiddleware::new_with_policy(
             reqwest_retry::policies::ExponentialBackoff::builder()
-                .retry_bounds(Duration::from_secs(1), Duration::from_secs(5))
-                .build_with_total_retry_duration(Duration::from_secs(20)),
+                .retry_bounds(Duration::from_secs(1), Duration::from_secs(4))
+                .build_with_total_retry_duration(Duration::from_secs(8)),
         ))
         .build()
 }

@@ -77,7 +77,7 @@ impl XvbPubStats {
     ) -> std::result::Result<Self, anyhow::Error> {
         Ok(client
             .get(XVB_URL_PUBLIC_API)
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(5))
             .send()
             .await?
             .json::<Self>()
