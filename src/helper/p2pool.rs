@@ -115,7 +115,7 @@ impl Helper {
                     }
                 } else {
                     error!(
-                        "P2pool | PTY Getting data from status: Lines contains a Monero no but no value found: {line}"
+                        "P2pool | PTY Getting data from status: Lines contains a Monero node but no value found: {line}"
                     );
                 }
             }
