@@ -159,7 +159,7 @@ pub fn nb_current_shares(s: &str) -> Option<u32> {
 // get the number of current shares
 pub fn p2pool_monero_node(s: &str) -> Option<Node> {
     static CURRENT_NODE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"= (?P<ip>\S+):RPC (?P<rpc>\d+):ZMQ (?P<zmq>\d+)").unwrap());
+        Lazy::new(|| Regex::new(r"(?P<ip>\S+):RPC (?P<rpc>\d+):ZMQ (?P<zmq>\d+)").unwrap());
     if let Some(c) = CURRENT_NODE.captures(s)
         && let Some(m_ip) = c.name("ip")
         && let Some(m_rpc) = c.name("rpc")
