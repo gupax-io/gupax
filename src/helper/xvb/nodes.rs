@@ -21,7 +21,7 @@ use std::{
 };
 
 use derive_more::Display;
-use log::{error, info};
+use log::{info, warn};
 use serde::Deserialize;
 use tokio::spawn;
 
@@ -108,101 +108,65 @@ impl Pool {
         p2pool_state: &P2pool,
         xvb_state: &Xvb,
     ) {
-        if xvb_state.manual_pool_enabled {
-            let manual_pool = if xvb_state.manual_pool_eu {
-                Pool::XvBEurope
+        // ping XvB nodes, or only one if set manual
+        let xvb_pools_to_ping = if xvb_state.manual_pool_enabled {
+            if xvb_state.manual_pool_eu {
+                vec![Pool::XvBEurope]
             } else {
-                Pool::XvBNorthAmerica
-            };
-            info!("XvB node {} has been chosen manually", manual_pool.url());
-            output_console(
-                &mut gui_api_xvb.lock().unwrap().output,
-                &format!("XvB node {manual_pool} has been chosen manually"),
-                ProcessName::Xvb,
-            );
-            gui_api_xvb.lock().unwrap().stats_priv.pool = manual_pool;
-            if process_xvb.lock().unwrap().state != ProcessState::Syncing {
-                process_xvb.lock().unwrap().state = ProcessState::Syncing;
-            }
-            return;
-        }
-        // two spawn to ping the two nodes in parallel and not one after the other.
-        let ms_eu_handle = spawn(async move {
-            info!("XvB | ping XvBEuropean XvB Node");
-            let socket_address = format!("{}:{}", &Pool::XvBEurope.url(), &Pool::XvBEurope.port())
-                .to_socket_addrs()
-                .expect("hardcored valued should always convert to SocketAddr")
-                .collect::<Vec<SocketAddr>>()[0];
-
-            port_ping(socket_address, TIMEOUT_NODE_PING).await
-        });
-        let ms_na_handle = spawn(async move {
-            info!("XvB | ping North America Node");
-            let socket_address = format!(
-                "{}:{}",
-                &Pool::XvBNorthAmerica.url(),
-                &Pool::XvBNorthAmerica.port()
-            )
-            .to_socket_addrs()
-            .expect("hardcored valued should always convert to SocketAddr")
-            .collect::<Vec<SocketAddr>>()[0];
-
-            port_ping(socket_address, TIMEOUT_NODE_PING).await
-        });
-        let ms_eu = ms_eu_handle
-            .await
-            .ok()
-            .unwrap_or_else(|| Err(anyhow::Error::msg("")))
-            .ok();
-        let ms_na = ms_na_handle
-            .await
-            .ok()
-            .unwrap_or_else(|| Err(anyhow::Error::msg("")))
-            .ok();
-        let pool = if let Some(ms_eu) = ms_eu {
-            if let Some(ms_na) = ms_na {
-                // if two nodes are up, compare ping latency and return fastest.
-                if ms_na != TIMEOUT_NODE_PING && ms_eu != TIMEOUT_NODE_PING {
-                    if ms_na < ms_eu {
-                        Pool::XvBNorthAmerica
-                    } else {
-                        Pool::XvBEurope
-                    }
-                } else if ms_na != TIMEOUT_NODE_PING && ms_eu == TIMEOUT_NODE_PING {
-                    // if only na is online, return it.
-                    Pool::XvBNorthAmerica
-                } else if ms_na == TIMEOUT_NODE_PING && ms_eu != TIMEOUT_NODE_PING {
-                    // if only eu is online, return it.
-                    Pool::XvBEurope
-                } else {
-                    // if P2pool is returned, it means none of the two nodes are available.
-                    Pool::P2pool(p2pool_state.current_port(
-                        process_p2pool.lock().unwrap().is_alive(),
-                        &p2pool_img.lock().unwrap(),
-                    ))
-                }
-            } else {
-                error!("ping has failed !");
-                Pool::P2pool(p2pool_state.current_port(
-                    process_p2pool.lock().unwrap().is_alive(),
-                    &p2pool_img.lock().unwrap(),
-                ))
+                vec![Pool::XvBNorthAmerica]
             }
         } else {
-            error!("ping has failed !");
+            vec![Pool::XvBNorthAmerica, Pool::XvBEurope]
+        };
+
+        // prepare the ping job
+        let mut handles = vec![];
+        for pool in xvb_pools_to_ping.clone() {
+            info!("XvB | ping {pool} XvB pool");
+            handles.push(spawn(async move {
+                let socket_address = format!("{}:{}", pool.url(), pool.port())
+                    .to_socket_addrs()
+                    .expect("hardcored valued should always convert to SocketAddr")
+                    .collect::<Vec<SocketAddr>>()[0];
+                (port_ping(socket_address, TIMEOUT_NODE_PING).await, pool)
+            }));
+        }
+        // ping pools at the same time
+        let mut results = vec![];
+        for handle in handles {
+            let result = handle
+                .await
+                .ok()
+                .unwrap_or_else(|| (Err(anyhow::Error::msg("")), Pool::default()));
+            results.push((result.0.ok(), result.1));
+        }
+
+        // filter and return the lowest latency pool
+        let pool = results
+            .into_iter()
+            .filter_map(|(ms, pool)| ms.map(|ms| (ms, pool)))
+            .min_by_key(|(ms, _)| *ms);
+
+        let chosen_pool = if let Some(fastest_pool) = pool {
+            fastest_pool.1
+        } else {
             Pool::P2pool(p2pool_state.current_port(
                 process_p2pool.lock().unwrap().is_alive(),
                 &p2pool_img.lock().unwrap(),
             ))
         };
-        if pool
+
+        if chosen_pool
             == Pool::P2pool(p2pool_state.current_port(
                 process_p2pool.lock().unwrap().is_alive(),
                 &p2pool_img.lock().unwrap(),
             ))
         {
+            xvb_pools_to_ping
+                .iter()
+                .for_each(|p| warn!("ping for {p} failed !"));
             // if both nodes are dead, then the state of the process must be NodesOffline
-            info!("XvB node ping, all offline or ping failed, switching back to local p2pool",);
+            warn!("XvB node ping, all offline or ping failed, switching back to local p2pool",);
             output_console(
                 &mut gui_api_xvb.lock().unwrap().output,
                 "XvB node ping, all offline or ping failed, switching back to local p2pool",
@@ -210,13 +174,23 @@ impl Pool {
             );
             process_xvb.lock().unwrap().state = ProcessState::OfflinePoolsAll;
         } else {
-            // if node is up and because update_fastest is used only if token/address is valid, it means XvB process is Alive.
-            info!("XvB node ping, both online and best is {}", pool.url());
-            output_console(
-                &mut gui_api_xvb.lock().unwrap().output,
-                &format!("XvB Pool ping, {pool} is selected as the fastest."),
-                ProcessName::Xvb,
-            );
+            info!("XvB pool ping, chosen pool is {}", chosen_pool.url());
+            // set a different message if the user manually selected the pool
+            if xvb_state.manual_pool_enabled {
+                output_console(
+                    &mut gui_api_xvb.lock().unwrap().output,
+                    &format!(
+                        "XvB Pool ping, {chosen_pool} has been manually selected and is online."
+                    ),
+                    ProcessName::Xvb,
+                );
+            } else {
+                output_console(
+                    &mut gui_api_xvb.lock().unwrap().output,
+                    &format!("XvB Pool ping, {chosen_pool} is selected as the fastest."),
+                    ProcessName::Xvb,
+                );
+            }
             info!("ProcessState to Syncing after finding joinable node");
             // could be used by xmrig who signal that a node is not joignable
             // or by the start of xvb
@@ -225,6 +199,6 @@ impl Pool {
                 process_xvb.lock().unwrap().state = ProcessState::Syncing;
             }
         }
-        pub_api_xvb.lock().unwrap().stats_priv.pool = pool;
+        pub_api_xvb.lock().unwrap().stats_priv.pool = chosen_pool;
     }
 }
