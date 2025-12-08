@@ -7,7 +7,7 @@ use crate::helper::{Pool, PubXvbApi};
 use crate::helper::{Process, check_died, check_user_input, sleep, sleep_end_loop};
 use crate::human::HumanTime;
 use crate::miscs::{client, output_console};
-use crate::regex::{XMRIG_REGEX, contains_error, contains_usepool, detect_pool_xmrig};
+use crate::regex::XMRIG_REGEX;
 use crate::utils::human::HumanNumber;
 use crate::utils::sudo::SudoState;
 use enclose::{enc, enclose};
@@ -84,51 +84,24 @@ impl Helper {
             // for that need to catch "connect error"
             // only check if xvb process is used and xmrig-proxy is not.
             if process_xvb.lock().unwrap().is_alive() && !process_xp.lock().unwrap().is_alive() {
-                if contains_error(&line) {
-                    let current_pool = pub_api_xvb.lock().unwrap().current_pool.clone();
-                    if let Some(current_pool) = current_pool {
-                        // updating current pool to None, will stop sending signal of FailedPool until new pool is set
-                        // send signal to update pool.
-                        warn!("XMRig PTY Parse | pool is offline, sending signal to update pools.");
-                        // update pools only if we were not mining on p2pool.
-                        // if xmrig stop, xvb will react in any case.
-                        if current_pool
-                            != Pool::P2pool(p2pool_state.current_port(
-                                process_p2pool.lock().unwrap().is_alive(),
-                                &p2pool_img.lock().unwrap(),
-                            ))
-                        {
-                            process_xvb.lock().unwrap().signal =
-                                ProcessSignal::UpdatePools(current_pool);
-                        }
-                        pub_api_xvb.lock().unwrap().current_pool = None;
-                    }
-                }
-                if contains_usepool(&line) {
-                    info!("XMRig PTY Parse | new pool detected");
-                    // need to update current pool because it was updated.
-                    // if custom pool made by user, it is not supported because algo is deciding which pool to use.
-                    let pool = detect_pool_xmrig(
-                        &line,
-                        proxy_state
-                            .current_ports(
-                                process_xp.lock().unwrap().is_alive(),
-                                &proxy_img.lock().unwrap(),
-                            )
-                            .0,
-                        p2pool_state.current_port(
-                            process_p2pool.lock().unwrap().is_alive(),
-                            &p2pool_img.lock().unwrap(),
-                        ),
-                    );
-                    if pool.is_none() {
-                        error!("XMRig PTY Parse | pool is not understood, switching to backup.");
-                        // update with default will choose which XvB to prefer. Will update XvB to use p2pool.
-                        process_xvb.lock().unwrap().signal =
-                            ProcessSignal::UpdatePools(Pool::default());
-                    }
-                    pub_api_xvb.lock().unwrap().current_pool = pool;
-                }
+                let proxy_port = proxy_state
+                    .current_ports(
+                        process_xp.lock().unwrap().is_alive(),
+                        &proxy_img.lock().unwrap(),
+                    )
+                    .0;
+                let p2pool_port = p2pool_state.current_port(
+                    process_p2pool.lock().unwrap().is_alive(),
+                    &p2pool_img.lock().unwrap(),
+                );
+                Pool::update_current_pool(
+                    &line,
+                    proxy_port,
+                    p2pool_port,
+                    &process_xvb,
+                    pub_api_xvb,
+                    ProcessName::Xmrig,
+                );
             }
             //			println!("{}", line); // For debugging.
             if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {

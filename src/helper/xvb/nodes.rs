@@ -21,7 +21,7 @@ use std::{
 };
 
 use derive_more::Display;
-use log::{info, warn};
+use log::{error, info, warn};
 use serde::Deserialize;
 use tokio::spawn;
 
@@ -29,8 +29,13 @@ use crate::{
     GUPAX_VERSION_UNDERSCORE, XVB_NODE_EU, XVB_NODE_NA, XVB_NODE_PORT,
     components::node::TIMEOUT_NODE_PING,
     disk::state::{P2pool, Xvb},
-    helper::{Process, ProcessName, ProcessState, p2pool::ImgP2pool, xvb::output_console},
-    utils::node_latency::port_ping,
+    helper::{
+        Process, ProcessName, ProcessSignal, ProcessState, p2pool::ImgP2pool, xvb::output_console,
+    },
+    utils::{
+        node_latency::port_ping,
+        regex::{contains_error, contains_timeout, contains_usepool, detect_pool_xmrig},
+    },
 };
 
 use super::PubXvbApi;
@@ -200,5 +205,42 @@ impl Pool {
             }
         }
         pub_api_xvb.lock().unwrap().stats_priv.pool = chosen_pool;
+    }
+    pub fn update_current_pool(
+        line: &str,
+        proxy_port: u16,
+        p2pool_port: u16,
+        process_xvb: &Arc<Mutex<Process>>,
+        pub_api_xvb: &Arc<Mutex<PubXvbApi>>,
+        process: ProcessName,
+    ) {
+        if contains_error(&line) || contains_timeout(&line) {
+            let current_node = pub_api_xvb.lock().unwrap().current_pool.clone();
+            if let Some(current_node) = current_node {
+                // updating current node to None, will stop sending signal of FailedNode until new node is set
+                // send signal to update node.
+                warn!("{process} PTY Parse | pool is offline, sending signal to update nodes.");
+                if current_node != Pool::P2pool(p2pool_port) {
+                    process_xvb.lock().unwrap().signal = ProcessSignal::UpdatePools(current_node);
+                }
+                pub_api_xvb.lock().unwrap().current_pool = None;
+            }
+        }
+        if contains_usepool(&line) {
+            // need to update current pool because it was updated.
+            // if custom pool made by user, it is not supported because algo is deciding which pool to use.
+            let pool = detect_pool_xmrig(&line, proxy_port, p2pool_port);
+
+            if pool.is_none() {
+                error!("{process} PTY Parse | pool is not understood, switching to backup.");
+                // update with default will choose which XvB to prefer. Will update XvB to use p2pool.
+                process_xvb.lock().unwrap().signal = ProcessSignal::UpdatePools(Pool::default());
+            } else if
+            // if pool detected is different than current pool known by XvB
+            pool != pub_api_xvb.lock().unwrap().current_pool {
+                info!("XMRig PTY Parse | new pool detected");
+                pub_api_xvb.lock().unwrap().current_pool = pool;
+            }
+        }
     }
 }

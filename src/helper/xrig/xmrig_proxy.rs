@@ -45,7 +45,7 @@ use crate::{
     },
     macros::sleep,
     miscs::output_console,
-    regex::{XMRIG_REGEX, contains_timeout, contains_usepool, detect_pool_xmrig},
+    regex::{XMRIG_REGEX, detect_pool_xmrig},
 };
 use crate::{PROXY_API_PORT_DEFAULT, PROXY_PORT_DEFAULT, XMRIG_API_SUMMARY_ENDPOINT};
 
@@ -92,49 +92,19 @@ impl Helper {
             // for that need to catch "connect error"
             // only switch nodes of XvB if XvB process is used
             if process_xvb.lock().unwrap().is_alive() {
-                if contains_timeout(&line) {
-                    let current_node = pub_api_xvb.lock().unwrap().current_pool.clone();
-                    if let Some(current_node) = current_node {
-                        // updating current node to None, will stop sending signal of FailedNode until new node is set
-                        // send signal to update node.
-                        warn!(
-                            "XMRig-Proxy PTY Parse | node is offline, sending signal to update nodes."
-                        );
-                        if current_node
-                            != Pool::P2pool(p2pool_state.current_port(
-                                process_p2pool.lock().unwrap().is_alive(),
-                                &p2pool_img.lock().unwrap(),
-                            ))
-                        {
-                            process_xvb.lock().unwrap().signal =
-                                ProcessSignal::UpdatePools(current_node);
-                        }
-                        pub_api_xvb.lock().unwrap().current_pool = None;
-                    }
-                }
-                if contains_usepool(&line) {
-                    info!("XMRig-Proxy PTY Parse | new pool detected");
-                    // need to update current node because it was updated.
-                    // if custom node made by user, it is not supported because algo is deciding which node to use.
-                    // the state of the process we are in will always be in sync with the image of settings with started with because it is cloned with the start of the process.
-                    let node = detect_pool_xmrig(
-                        &line,
-                        proxy_state.bind_port(),
-                        p2pool_state.current_port(
-                            process_p2pool.lock().unwrap().is_alive(),
-                            &p2pool_img.lock().unwrap(),
-                        ),
-                    );
-                    if node.is_none() {
-                        warn!(
-                            "XMRig-Proxy PTY Parse | node is not understood, switching to backup."
-                        );
-                        // update with default will choose which XvB to prefer. Will update XvB to use p2pool.
-                        process_xvb.lock().unwrap().signal =
-                            ProcessSignal::UpdatePools(Pool::default());
-                    }
-                    pub_api_xvb.lock().unwrap().current_pool = node;
-                }
+                let p2pool_port = p2pool_state.current_port(
+                    process_p2pool.lock().unwrap().is_alive(),
+                    &p2pool_img.lock().unwrap(),
+                );
+
+                Pool::update_current_pool(
+                    &line,
+                    proxy_state.bind_port(),
+                    p2pool_port,
+                    &process_xvb,
+                    pub_api_xvb,
+                    ProcessName::XmrigProxy,
+                );
             }
             //			println!("{}", line); // For debugging.
             if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
