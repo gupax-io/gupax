@@ -4,6 +4,7 @@ use crate::app::submenu_enum::SubmenuP2pool;
 use crate::disk::state::{P2pool, StartOptionsMode, State};
 use crate::helper::crawler::Crawler;
 use crate::helper::p2pool::PubP2poolApi;
+use egui::Image;
 // Gupax
 //
 // Copyright (c) 2024-2025 Cyrix126
@@ -55,9 +56,10 @@ impl P2pool {
         //---------------------------------------------------------------------------------------------------- [Simple] Console
         // debug!("P2Pool Tab | Rendering [Console]");
         // let mut prefer_local_node = api.lock().unwrap().prefer_local_node;
+        let logo = Some(Image::from_bytes("bytes:/p2pool.png", BYTES_P2POOL));
         header_tab(
             ui,
-            None,
+            logo,
             &[("P2Pool", P2POOL_URL, "")],
             Some("Decentralized pool for Monero mining"),
             true,

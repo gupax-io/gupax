@@ -19,11 +19,12 @@ use crate::app::panels::middle::common::console::{console, input_args_field, sta
 use crate::app::panels::middle::common::header_tab::header_tab;
 use crate::app::panels::middle::common::state_edit_field::{path_db_field, slider_state_field};
 use crate::app::panels::middle::{rpc_bind_field, rpc_port_field, zmq_bind_field, zmq_port_field};
+use crate::utils::constants::BYTES_MONERO;
 use crate::{
     NODE_DNS_BLOCKLIST, NODE_DNS_CHECKPOINT, NODE_FULL_MEM, NODE_INPUT, NODE_PRUNNING, NODE_URL,
     START_OPTIONS_HOVER,
 };
-use egui::TextStyle;
+use egui::{Image, TextStyle};
 use std::sync::{Arc, Mutex};
 
 use log::debug;
@@ -45,9 +46,10 @@ impl Node {
         ui: &mut egui::Ui,
     ) {
         ui.style_mut().override_text_style = Some(TextStyle::Body);
+        let logo = Some(Image::from_bytes("bytes:/monero.png", BYTES_MONERO));
         header_tab(
             ui,
-            None,
+            logo,
             &[("Monerod", NODE_URL, "")],
             Some("C++ Monero Node"),
             true,
