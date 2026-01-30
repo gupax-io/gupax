@@ -101,6 +101,7 @@ pub fn init_logger(now: Instant, logfile: bool) {
 #[inline(never)]
 pub fn init_options(initial_window_size: Option<Vec2>) -> NativeOptions {
     let mut options = eframe::NativeOptions::default();
+    options.renderer = eframe::Renderer::Wgpu;
     options.viewport.min_inner_size = Some(Vec2::new(APP_MIN_WIDTH, APP_MIN_HEIGHT));
     options.viewport.max_inner_size = Some(Vec2::new(APP_MAX_WIDTH, APP_MAX_HEIGHT));
     options.viewport.inner_size = initial_window_size;

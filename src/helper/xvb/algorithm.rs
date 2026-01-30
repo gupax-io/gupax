@@ -353,36 +353,34 @@ impl<'a> Algorithm<'a> {
             self.stats.msg_xmrig_or_xp, pool
         );
 
-        if self.gui_api_xvb.lock().unwrap().current_pool.as_ref() != Some(&pool) {
-            if let Err(err) = update_xmrig_config(
-                self.client,
-                &self.stats.api_url,
-                self.token_xmrig,
-                &pool,
-                &self.stats.address,
-                "",
-            )
-            .await
-            {
-                // show to console error about updating xmrig config
-                warn!(
-                    "Algorithm | Failed request HTTP API {}",
-                    self.stats.msg_xmrig_or_xp
-                );
-                output_console(
-                    &mut self.gui_api_xvb.lock().unwrap().output,
-                    &format!(
-                        "Failure to update {} config with HTTP API.\nError: {}",
-                        self.stats.msg_xmrig_or_xp, err
-                    ),
-                    crate::helper::ProcessName::Xvb,
-                );
-            } else {
-                info!(
-                    "Algorithm | {} mining on XvB pool",
-                    self.stats.msg_xmrig_or_xp
-                );
-            }
+        if let Err(err) = update_xmrig_config(
+            self.client,
+            &self.stats.api_url,
+            self.token_xmrig,
+            &pool,
+            &self.stats.address,
+            "",
+        )
+        .await
+        {
+            // show to console error about updating xmrig config
+            warn!(
+                "Algorithm | Failed request HTTP API {}",
+                self.stats.msg_xmrig_or_xp
+            );
+            output_console(
+                &mut self.gui_api_xvb.lock().unwrap().output,
+                &format!(
+                    "Failure to update {} config with HTTP API.\nError: {}",
+                    self.stats.msg_xmrig_or_xp, err
+                ),
+                crate::helper::ProcessName::Xvb,
+            );
+        } else {
+            info!(
+                "Algorithm | {} mining on XvB pool",
+                self.stats.msg_xmrig_or_xp
+            );
         }
     }
 

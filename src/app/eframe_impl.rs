@@ -10,6 +10,7 @@ use crate::helper::{Helper, ProcessName, ProcessState};
 use crate::inits::init_text_styles;
 use crate::{NODE_MIDDLE, P2POOL_MIDDLE, SECOND, XMRIG_MIDDLE, XMRIG_PROXY_MIDDLE, XVB_MIDDLE};
 use derive_more::derive::{Deref, DerefMut};
+// use eframe::wgpu::PollType;
 use log::debug;
 
 impl eframe::App for App {
@@ -108,6 +109,23 @@ impl eframe::App for App {
         let p_xvb = process_states.find_mut(ProcessName::Xvb);
         p_xvb.alive = p_xvb.state != ProcessState::Dead;
         self.middle_panel(ctx, frame, key, &process_states);
+
+        let buffer_memory = self
+            .wgpu_render_state
+            .as_ref()
+            .unwrap()
+            .device
+            .get_internal_counters()
+            .hal
+            .buffer_memory
+            .read();
+        println!("{buffer_memory}");
+        // self.wgpu_render_state
+        //     .as_ref()
+        //     .unwrap()
+        //     .device
+        //     .poll(PollType::Poll)
+        //     .unwrap();
     }
 }
 #[derive(Debug)]

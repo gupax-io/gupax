@@ -101,6 +101,7 @@ notify-rust = "4.11"
 ctrlc = {version="3.5", features=["termination"]}
 # Unix dependencies
 [target.'cfg(unix)'.dependencies]
+wgpu = {version = "27.0.1", features=["angle", "counters"]}
 tar = "0.4.44"
 flate2 = "1.1"
 sudo = "0.6.0"
@@ -121,7 +122,7 @@ egui = {version="0.33", features=["callstack"]}
 # glow start on windows but not wgpu
 # need the same version that eframe is using with egui_wgpu
 # feature angle to enable support for old cpu on Windows
-wgpu = {version = "27.0.1", features=["angle"]}
+wgpu = {version = "27.0.1", features=["angle", "counters"]}
 zip = "6.0.0"
 is_elevated = "0.1.2"
 ## portable-pty upgrade on 0.9 will break terminals on windows 

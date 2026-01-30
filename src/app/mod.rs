@@ -184,17 +184,19 @@ pub struct App {
     pub name_version: String,           // [Gupax vX.X.X]
     #[cfg(target_os = "windows")]
     pub xmrig_outside_warning_acknowledge: bool,
+    pub wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
 }
 
 impl App {
     #[cold]
     #[inline(never)]
-    pub fn cc(cc: &CreationContext<'_>, resolution: Vec2, app: Self) -> Self {
+    pub fn cc(cc: &CreationContext<'_>, resolution: Vec2, mut app: Self) -> Self {
         init_text_styles(
             &cc.egui_ctx,
             crate::miscs::clamp_scale(app.state.gupax.selected_scale),
         );
         app.set_theme(&cc.egui_ctx);
+        app.wgpu_render_state = Some(cc.wgpu_render_state.clone().unwrap());
         Self { resolution, ..app }
     }
 
@@ -399,6 +401,7 @@ impl App {
             notifications_api,
             #[cfg(target_os = "windows")]
             xmrig_outside_warning_acknowledge: false,
+            wgpu_render_state: None,
         };
         //---------------------------------------------------------------------------------------------------- App init data that *could* panic
         info!("App Init | Getting EXE path...");
