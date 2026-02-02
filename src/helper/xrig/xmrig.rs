@@ -9,7 +9,6 @@ use crate::human::HumanTime;
 use crate::miscs::{client, output_console};
 use crate::regex::XMRIG_REGEX;
 use crate::utils::human::HumanNumber;
-use crate::utils::sudo::SudoState;
 use enclose::{enc, enclose};
 use log::*;
 use portable_pty::Child;
@@ -57,8 +56,7 @@ impl Helper {
         let mut i = 0;
         while let Some(Ok(line)) = stdout.next() {
             let line = strip_ansi_escapes::strip_str(line);
-            // skip until the first line of xmrig is appearing, hiding input for sudo
-            #[cfg(target_family = "unix")]
+            // skip until the first line of xmrig is appearing, hiding automatic input of gupax
             if i == 0 && !line.contains("ABOUT") {
                 continue;
             }
@@ -115,57 +113,6 @@ impl Helper {
     //---------------------------------------------------------------------------------------------------- XMRig specific, most functions are very similar to P2Pool's
     #[cold]
     #[inline(never)]
-    // If processes are started with [sudo] on macOS, they must also
-    // be killed with [sudo] (even if I have a direct handle to it as the
-    // parent process...!). This is only needed on macOS, not Linux.
-    fn sudo_kill(pid: u32, sudo: &Arc<Mutex<SudoState>>) -> bool {
-        // Spawn [sudo] to execute [kill] on the given [pid]
-        let mut child = std::process::Command::new("sudo")
-            .args(["--stdin", "kill", "-9", &pid.to_string()])
-            .stdin(Stdio::piped())
-            .spawn()
-            .unwrap();
-        // only insert the password if the user is required to
-        if Self::password_needed() {
-            // Write the [sudo] password to STDIN.
-            let mut stdin = child.stdin.take().unwrap();
-            use std::io::Write;
-            if let Err(e) = writeln!(stdin, "{}\n", sudo.lock().unwrap().pass) {
-                error!("Sudo Kill | STDIN error: {e}");
-            }
-        }
-
-        // Return exit code of [sudo/kill].
-        child.wait().unwrap().success()
-    }
-
-    #[cold]
-    #[inline(never)]
-    /// if the user has his visudo configured to not ask a password using sudo, this will return false
-    pub fn password_needed() -> bool {
-        // Make sure sudo timestamp is reset
-        let reset = std::process::Command::new("sudo")
-            .arg("--reset-timestamp")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::piped())
-            .status();
-        match reset {
-            Ok(_) => {}
-            Err(_) => return true,
-        };
-        let cmd = std::process::Command::new("sudo")
-            .args(["-n", "true"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        if cmd.is_ok_and(|s| s.success()) {
-            return false;
-        }
-        true
-    }
-    #[cold]
-    #[inline(never)]
     // Just sets some signals for the watchdog thread to pick up on.
     pub fn stop_xmrig(helper: &Arc<Mutex<Self>>) {
         info!("XMRig | Attempting to stop...");
@@ -187,7 +134,6 @@ impl Helper {
         state_p2pool: &P2pool,
         state_proxy: &XmrigProxy,
         path: &Path,
-        sudo: Arc<Mutex<SudoState>>,
     ) {
         info!("XMRig | Attempting to restart...");
         helper.lock().unwrap().xmrig.lock().unwrap().signal = ProcessSignal::Restart;
@@ -202,7 +148,7 @@ impl Helper {
             }
             // Ok, process is not alive, start the new one!
             info!("XMRig | Old process seems dead, starting new one!");
-            Self::start_xmrig(&helper, &state, &state_p2pool, &state_proxy, &path, sudo);
+            Self::start_xmrig(&helper, &state, &state_p2pool, &state_proxy, &path);
         }));
         info!("XMRig | Restart ... OK");
     }
@@ -215,7 +161,6 @@ impl Helper {
         p2pool_state: &P2pool,
         proxy_state: &XmrigProxy,
         path: &Path,
-        sudo: Arc<Mutex<SudoState>>,
     ) {
         // get the stratum port of p2pool
         //
@@ -261,7 +206,6 @@ impl Helper {
                 pub_api,
                 args,
                 path,
-                sudo,
                 api_ip_port,
                 &token,
                 process_xvb,
@@ -439,11 +383,21 @@ impl Helper {
         args
     }
 
-    // We actually spawn [sudo] on Unix, with XMRig being the argument.
-    #[cfg(target_family = "unix")]
+    // We spawn [pkexec] on Unix, with XMRig being the argument.
+    #[cfg(target_os = "linux")]
     fn create_xmrig_cmd_unix(args: Vec<String>, path: PathBuf) -> portable_pty::CommandBuilder {
+        let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new("pkexec");
+        cmd.arg(path.clone());
+        cmd.args(args);
+        cmd.cwd(path.as_path().parent().unwrap());
+        cmd
+    }
+
+    // We actually spawn [sudo] on macos, with XMRig being the argument.
+    #[cfg(target_os = "macos")]
+    fn create_xmrig_cmd_macos(args: Vec<String>, path: PathBuf) -> portable_pty::CommandBuilder {
         let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new("sudo");
-        cmd.arg("-S");
+        cmd.arg(path.clone());
         cmd.args(args);
         cmd.cwd(path.as_path().parent().unwrap());
         cmd
@@ -469,9 +423,8 @@ impl Helper {
         process: Arc<Mutex<Process>>,
         gui_api: Arc<Mutex<PubXmrigApi>>,
         pub_api: Arc<Mutex<PubXmrigApi>>,
-        mut args: Vec<String>,
+        args: Vec<String>,
         path: std::path::PathBuf,
-        sudo: Arc<Mutex<SudoState>>,
         mut api_ip_port: String,
         token: &str,
         process_xvb: Arc<Mutex<Process>>,
@@ -483,20 +436,6 @@ impl Helper {
         proxy_state: &XmrigProxy,
         proxy_img: &Arc<Mutex<ImgProxy>>,
     ) {
-        // The actual binary we're executing is [sudo], technically
-        // the XMRig path is just an argument to sudo, so add it.
-        // Before that though, add the ["--prompt"] flag and set it
-        // to emptiness so that it doesn't show up in the output.
-        if cfg!(unix) {
-            args.splice(..0, vec![path.display().to_string()]);
-            // do not use prompt when sudo is not needed
-            // success is still to false if sudo has not been used to test the password when starting xmrig
-            // which would happen if the user can use sudo without a password
-            if sudo.lock().unwrap().success {
-                args.splice(..0, vec![r#"--"#.to_string()]);
-                args.splice(..0, vec![r#"--prompt="#.to_string()]);
-            }
-        }
         // 1a. Create PTY
         debug!("XMRig | Creating PTY...");
         let pty = portable_pty::native_pty_system();
@@ -522,41 +461,17 @@ impl Helper {
         debug!("XMRig | Creating command...");
         #[cfg(target_os = "windows")]
         let cmd = Self::create_xmrig_cmd_windows(args, path);
-        #[cfg(target_family = "unix")]
+        #[cfg(target_os = "linux")]
         let cmd = Self::create_xmrig_cmd_unix(args, path);
+        #[cfg(target_os = "macos")]
+        let cmd = Self::create_xmrig_cmd_macos(args, path);
         // 1c. Create child
         debug!("XMRig | Creating child...");
         let child_pty = Arc::new(Mutex::new(pair.slave.spawn_command(cmd).unwrap()));
         drop(pair.slave);
 
         let mut stdin = pair.master.take_writer().unwrap();
-        // 2. Input [sudo] pass, wipe, then drop.
-        if cfg!(unix) && sudo.lock().unwrap().success {
-            debug!("XMRig | Inputting [sudo] and wiping...");
-            let max_sudo_prompt_time = Duration::from_secs(6);
-            let now = Instant::now();
-            while process.lock().unwrap().state != ProcessState::NotMining {
-                // let sudo the time to prompt
-                sleep!(30);
-                if let Err(e) = writeln!(stdin, "{}", sudo.lock().unwrap().pass) {
-                    error!("XMRig | Sudo STDIN error: {e}");
-                };
-                // let xmrig time to start before checking if it has started once again
-                sleep!(30);
-                // check that we do not get stuck here if for some reason the sudo prompt never occurs or xmrig does not start
-                if now.elapsed() > max_sudo_prompt_time {
-                    error!(
-                        "XMRig | Could not start with sudo in {} seconds",
-                        max_sudo_prompt_time.as_secs()
-                    );
-                }
-            }
-            SudoState::wipe(&sudo);
-            SudoState::reset(&sudo);
 
-            info!("sudo wipe and output cleared");
-        }
-        // b) Reset GUI STDOUT just in case.
         debug!("XMRig | Clearing GUI output...");
         gui_api.lock().unwrap().output.clear();
 
@@ -655,7 +570,6 @@ impl Helper {
                 &child_pty,
                 &start,
                 &mut gui_api.lock().unwrap().output,
-                &sudo,
             ) {
                 break;
             }
@@ -756,7 +670,6 @@ impl Helper {
         child_pty: &Arc<Mutex<Box<dyn Child + Sync + Send>>>,
         start: &Instant,
         gui_api_output_raw: &mut String,
-        sudo: &Arc<Mutex<SudoState>>,
     ) -> bool {
         let signal = &process.signal;
         if *signal == ProcessSignal::Stop || *signal == ProcessSignal::Restart {
@@ -766,12 +679,7 @@ impl Helper {
                 // If we're at this point, that means the user has
                 // entered their [sudo] pass again, after we wiped it.
                 // So, we should be able to find it in our [Arc<Mutex<SudoState>>].
-                Self::sudo_kill(child_pty.lock().unwrap().process_id().unwrap(), sudo);
-                // And... wipe it again (only if we're stopping full).
-                // If we're restarting, the next start will wipe it for us.
-                if *signal != ProcessSignal::Restart {
-                    SudoState::wipe(sudo);
-                }
+                Self::macos_kill(child_pty.lock().unwrap().process_id().unwrap());
             } else if let Err(e) = child_pty.lock().unwrap().kill() {
                 error!("XMRig Watchdog | Kill error: {e}");
             }
@@ -813,6 +721,20 @@ impl Helper {
             return true;
         }
         false
+    }
+
+    // If processes are started with [sudo] on macOS, they must also
+    // be killed with [sudo] (even if I have a direct handle to it as the
+    // parent process...!). This is only needed on macOS, not Linux.
+    fn macos_kill(pid: u32) -> bool {
+        // Spawn [sudo] to execute [kill] on the given [pid]
+        let mut child = std::process::Command::new("sudo")
+            .args(["kill", "-9", &pid.to_string()])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Return exit code of [sudo/kill].
+        child.wait().unwrap().success()
     }
 }
 

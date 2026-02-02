@@ -24,9 +24,8 @@ use crate::disk::state::State;
 use crate::helper::Helper;
 use crate::utils::constants::*;
 use crate::utils::ferris::*;
-use crate::utils::macros::{arc_mut, flip};
+use crate::utils::macros::arc_mut;
 use crate::utils::resets::{reset_nodes, reset_state};
-use crate::utils::sudo::SudoState;
 use egui::*;
 
 impl crate::app::App {
@@ -54,7 +53,8 @@ impl crate::app::App {
                     Oops => Image::from_bytes("bytes://oops.png", FERRIS_OOPS),
                     Error => Image::from_bytes("bytes://error.png", FERRIS_ERROR),
                     Panic => Image::from_bytes("bytes://panic.png", FERRIS_PANIC),
-                    ErrorFerris::Sudo => Image::from_bytes("bytes://panic.png", FERRIS_SUDO),
+                    #[cfg(target_os = "windows")]
+                    ErrorFerris::Admin => Image::from_bytes("bytes://panic.png", FERRIS_ADMIN),
                 };
 
                 match self.error_state.buttons {
@@ -108,7 +108,7 @@ impl crate::app::App {
                         );
                         ui.add_sized([width, height], Label::new("Reset the manual node list?"))
                     }
-                    ErrorButtons::Sudo => {
+                    ErrorButtons::WindowsAdmin => {
                         let text = format!(
                             "Why does XMRig need admin privilege?\n{XMRIG_ADMIN_REASON}"
                         );
@@ -116,7 +116,7 @@ impl crate::app::App {
                         ui.add_sized(
                             [width, height],
                             Label::new(format!(
-                                "--- Gupax needs sudo/admin privilege for XMRig! ---\n{}",
+                                "--- Gupax needs admin privilege for XMRig! ---\n{}",
                                 &self.error_state.msg
                             )),
                         );
@@ -334,72 +334,6 @@ impl crate::app::App {
                                 .clicked()
                         {
                             self.error_state.reset()
-                        }
-                    }
-                    ErrorButtons::Sudo => {
-                        let sudo_width = width / 10.0;
-                        let height = ui.available_height() / 4.0;
-                        let mut sudo = self.sudo.lock().unwrap();
-                        let hide = sudo.hide;
-                        if sudo.testing {
-                            ui.add_sized([width, height], Spinner::new().size(height));
-                            ui.disable()
-                        } else {
-                            ui.add_sized([width, height], Label::new(&sudo.msg));
-                        }
-                        ui.add_space(height);
-                        let height = ui.available_height() / 5.0;
-                        // Password input box with a hider.
-                        ui.horizontal(|ui| {
-                            let response = ui.add_sized(
-                                [sudo_width * 8.0, height],
-                                TextEdit::hint_text(
-                                    TextEdit::singleline(&mut sudo.pass).password(hide),
-                                    PASSWORD_TEXT,
-                                ),
-                            );
-                            let box_width = (ui.available_width() / 2.0) - 5.0;
-                            if (response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
-                                || ui
-                                    .add_sized([box_width, height], Button::new("Enter"))
-                                    .on_hover_text(PASSWORD_ENTER)
-                                    .clicked()
-                            {
-                                response.request_focus();
-                                if !sudo.testing {
-                                    SudoState::test_sudo(
-                                        self.sudo.clone(),
-                                        &self.helper,
-                                        &self.state.xmrig,
-                                        &self.state.p2pool,
-                                        &self.state.xmrig_proxy,
-                                        &self.state.gupax.absolute_xmrig_path,
-                                    );
-                                }
-                            }
-                            let color = if hide { BLACK } else { BRIGHT_YELLOW };
-                            if ui
-                                .add_sized(
-                                    [box_width, height],
-                                    Button::new(RichText::new("👁").color(color)),
-                                )
-                                .on_hover_text(PASSWORD_HIDE)
-                                .clicked()
-                            {
-                                flip!(sudo.hide);
-                            }
-                        });
-                        if (key.is_esc() && !sudo.testing)
-                            || ui
-                                .add_sized([width, height * 4.0], Button::new("Leave"))
-                                .on_hover_text(PASSWORD_LEAVE)
-                                .clicked()
-                        {
-                            self.error_state.reset();
-                        };
-                        // If [test_sudo()] finished, reset error state.
-                        if sudo.success {
-                            self.error_state.reset();
                         }
                     }
                     crate::app::ErrorButtons::Okay | crate::app::ErrorButtons::WindowsAdmin => {

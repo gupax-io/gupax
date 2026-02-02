@@ -179,11 +179,9 @@ pub const GREEN: egui::Color32 = egui::Color32::from_rgb(100, 230, 100);
 // pub const BLUE: egui::Color32 = egui::Color32::from_rgb(100, 175, 255);
 pub const ORANGE: egui::Color32 = egui::Color32::from_rgb(255, 120, 40);
 pub const YELLOW: egui::Color32 = egui::Color32::from_rgb(230, 230, 100);
-pub const BRIGHT_YELLOW: egui::Color32 = egui::Color32::from_rgb(250, 250, 100);
 pub const BONE: egui::Color32 = egui::Color32::from_rgb(190, 190, 190); // In between LIGHT_GRAY <-> GRAY
 pub const GRAY: egui::Color32 = egui::Color32::GRAY;
 pub const LIGHT_GRAY: egui::Color32 = egui::Color32::LIGHT_GRAY;
-pub const BLACK: egui::Color32 = egui::Color32::BLACK;
 pub const DARK_GRAY: egui::Color32 = egui::Color32::from_gray(13);
 
 // IP fetching
@@ -194,11 +192,6 @@ pub const SECOND: std::time::Duration = std::time::Duration::from_secs(1);
 
 // The explanation given to the user on why XMRig needs sudo.
 pub const XMRIG_ADMIN_REASON: &str = r#"The large hashrate difference between XMRig and other miners like Monero and P2Pool's built-in miners is mostly due to XMRig configuring CPU MSRs and setting up hugepages. Other miners like Monero or P2Pool's built-in miner do not do this. It can be done manually but it isn't recommended since XMRig does this for you automatically, but only if it has the proper admin privileges."#;
-// Password buttons
-pub const PASSWORD_TEXT: &str = "Enter sudo/admin password...";
-pub const PASSWORD_LEAVE: &str = "Return to the previous screen";
-pub const PASSWORD_ENTER: &str = "Attempt with the current password";
-pub const PASSWORD_HIDE: &str = "Toggle hiding/showing the password";
 
 // OS specific
 #[cfg(target_os = "windows")]

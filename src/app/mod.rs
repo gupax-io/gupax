@@ -54,7 +54,6 @@ use crate::miscs::get_exe_dir;
 use crate::utils::constants::VISUALS_GUPAX_DARK;
 use crate::utils::constants::VISUALS_GUPAX_LIGHT;
 use crate::utils::macros::arc_mut;
-use crate::utils::sudo::SudoState;
 use copy_dir::copy_dir;
 use derive_more::derive::Display;
 use eframe::CreationContext;
@@ -154,8 +153,6 @@ pub struct App {
     pub p2pool_stdin: String, // The buffer between the p2pool console and the [Helper]
     pub xmrig_stdin: String, // The buffer between the xmrig console and the [Helper]
     pub xmrig_proxy_stdin: String, // The buffer between the xmrig-proxy console and the [Helper]
-    // Sudo State
-    pub sudo: Arc<Mutex<SudoState>>, // This is just a dummy struct on [Windows].
     // State from [--flags]
     pub no_startup: bool,
     // Gupax-P2Pool API
@@ -370,7 +367,6 @@ impl App {
             p2pool_stdin: String::with_capacity(10),
             xmrig_stdin: String::with_capacity(10),
             xmrig_proxy_stdin: String::with_capacity(10),
-            sudo: arc_mut!(SudoState::new()),
             resizing: false,
             alpha: 0,
             no_startup: false,
@@ -745,7 +741,7 @@ impl App {
             app.admin = true;
         } else {
             error!("Windows | Admin user not detected!");
-            app.error_state.set("Gupax was not launched as Administrator!\nBe warned, XMRig might have less hashrate!".to_string(), ErrorFerris::Sudo, ErrorButtons::WindowsAdmin);
+            app.error_state.set("Gupax was not launched as Administrator!\nBe warned, XMRig might have less hashrate!".to_string(), ErrorFerris::Admin, ErrorButtons::WindowsAdmin);
         }
         #[cfg(target_family = "unix")]
         if sudo_check::check() != sudo_check::RunningAs::User {

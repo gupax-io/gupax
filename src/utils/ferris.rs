@@ -22,4 +22,5 @@ pub const FERRIS_CUTE: &[u8] = include_bytes!("../../assets/images/ferris/cute.p
 pub const FERRIS_OOPS: &[u8] = include_bytes!("../../assets/images/ferris/oops.png");
 pub const FERRIS_ERROR: &[u8] = include_bytes!("../../assets/images/ferris/error.png");
 pub const FERRIS_PANIC: &[u8] = include_bytes!("../../assets/images/ferris/panic.png"); // This isnt technically ferris but its ok since its spooky
-pub const FERRIS_SUDO: &[u8] = include_bytes!("../../assets/images/ferris/sudo.png");
+#[cfg(target_os = "windows")]
+pub const FERRIS_ADMIN: &[u8] = include_bytes!("../../assets/images/ferris/sudo.png");

@@ -24,5 +24,4 @@ pub mod node_latency;
 pub mod panic;
 pub mod regex;
 pub mod resets;
-pub mod sudo;
 pub mod xmr;

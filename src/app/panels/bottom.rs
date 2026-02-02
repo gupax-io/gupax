@@ -7,7 +7,7 @@ use crate::disk::node::Node;
 use crate::disk::pool::Pool;
 use crate::disk::state::{Gupax, GupaxTheme, State};
 use crate::helper::node::{CheckLocalOutsideNode, spawn_local_outside_checker};
-use crate::helper::{Helper, ProcessName, ProcessSignal, ProcessState};
+use crate::helper::{Helper, ProcessName, ProcessState};
 use crate::utils::constants::*;
 use crate::utils::errors::{ErrorButtons, ErrorFerris};
 use crate::utils::macros::sleep;
@@ -298,19 +298,13 @@ impl crate::app::App {
                             );
                         }
                         ProcessName::Xmrig => {
-                            if cfg!(windows) || !Helper::password_needed() {
                                 Helper::restart_xmrig(
                                     &self.helper,
                                     &self.state.xmrig,
                                     &self.state.p2pool,
                                     &self.state.xmrig_proxy,
                                     &self.state.gupax.absolute_xmrig_path,
-                                    Arc::clone(&self.sudo),
                                 );
-                            } else {
-                                self.sudo.lock().unwrap().signal = ProcessSignal::Restart;
-                                self.error_state.ask_sudo(&self.sudo);
-                            }
                         }
                         ProcessName::XmrigProxy => {
                             Helper::restart_xp(
@@ -447,19 +441,13 @@ impl crate::app::App {
                             },
 
                             ProcessName::Xmrig => {
-                                if cfg!(windows) || !Helper::password_needed() {
                                     Helper::start_xmrig(
                                         &self.helper,
                                         &self.state.xmrig,
                                         &self.state.p2pool,
                                         &self.state.xmrig_proxy,
                                         &self.state.gupax.absolute_xmrig_path,
-                                        Arc::clone(&self.sudo),
                                     );
-                                } else {
-                                    self.sudo.lock().unwrap().signal = ProcessSignal::Start;
-                                    self.error_state.ask_sudo(&self.sudo);
-                                }
                             }
 
                             ProcessName::XmrigProxy => Helper::start_xp(

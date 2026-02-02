@@ -244,7 +244,6 @@ pub enum ProcessState {
 pub enum ProcessSignal {
     #[default]
     None,
-    Start,
     Stop,
     Restart,
     UpdatePools(Pool),
