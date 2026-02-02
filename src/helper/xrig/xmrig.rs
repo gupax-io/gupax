@@ -21,7 +21,6 @@ use std::path::Path;
 use std::{
     fmt::Write,
     path::PathBuf,
-    process::Stdio,
     sync::{Arc, Mutex},
     thread,
     time::*,
@@ -567,6 +566,7 @@ impl Helper {
             // Stop on [Stop/Restart] SIGNAL
             if Self::xmrig_signal_end(
                 &mut process.lock().unwrap(),
+                &mut stdin,
                 &child_pty,
                 &start,
                 &mut gui_api.lock().unwrap().output,
@@ -667,6 +667,7 @@ impl Helper {
     }
     fn xmrig_signal_end(
         process: &mut Process,
+        stdin: &mut Box<dyn std::io::Write + Send>,
         child_pty: &Arc<Mutex<Box<dyn Child + Sync + Send>>>,
         start: &Instant,
         gui_api_output_raw: &mut String,
@@ -674,12 +675,12 @@ impl Helper {
         let signal = &process.signal;
         if *signal == ProcessSignal::Stop || *signal == ProcessSignal::Restart {
             debug!("XMRig Watchdog | Stop/Restart SIGNAL caught");
-            // macOS requires [sudo] again to kill [XMRig]
-            if cfg!(target_os = "macos") {
-                // If we're at this point, that means the user has
-                // entered their [sudo] pass again, after we wiped it.
-                // So, we should be able to find it in our [Arc<Mutex<SudoState>>].
-                Self::macos_kill(child_pty.lock().unwrap().process_id().unwrap());
+            if cfg!(target_family = "unix") {
+                // send a Ctrl+C in the input, overriding the need to re-authenticate
+
+                if let Err(e) = stdin.write_all(&[0x03]) {
+                    error!("XMRig Watchdog | Kill error: {e}");
+                }
             } else if let Err(e) = child_pty.lock().unwrap().kill() {
                 error!("XMRig Watchdog | Kill error: {e}");
             }
@@ -721,20 +722,6 @@ impl Helper {
             return true;
         }
         false
-    }
-
-    // If processes are started with [sudo] on macOS, they must also
-    // be killed with [sudo] (even if I have a direct handle to it as the
-    // parent process...!). This is only needed on macOS, not Linux.
-    fn macos_kill(pid: u32) -> bool {
-        // Spawn [sudo] to execute [kill] on the given [pid]
-        let mut child = std::process::Command::new("sudo")
-            .args(["kill", "-9", &pid.to_string()])
-            .stdin(Stdio::piped())
-            .spawn()
-            .unwrap();
-        // Return exit code of [sudo/kill].
-        child.wait().unwrap().success()
     }
 }
 
