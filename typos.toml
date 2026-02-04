@@ -5,4 +5,4 @@ extend-exclude = [
 	"README.md"
 ]
 [default]
-extend-ignore-identifiers-re = ["ehr", "PN"]
+extend-ignore-identifiers-re = ["ehr", "PN", "onnection", "onnections"]
