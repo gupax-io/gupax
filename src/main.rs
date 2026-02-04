@@ -96,19 +96,33 @@ fn main() {
                 app.state.gupax.selected_height as f32,
             ))
         };
-        let options = init_options(initial_window_size);
+        let mut options = init_options(initial_window_size);
 
         let resolution = Vec2::new(selected_width, selected_height);
 
-        // Run Gupax.
-        eframe::run_native(
-            &app.name_version.clone(),
-            options,
-            Box::new(move |cc| {
-                egui_extras::install_image_loaders(&cc.egui_ctx);
-                Ok(Box::new(App::cc(cc, resolution, app)))
-            }),
-        )
-        .unwrap();
+        // Run Gupax with the chosen renderer
+        if app.state.gupax.renderer_use_glow {
+            options.renderer = eframe::Renderer::Glow;
+            eframe::run_native(
+                &app.name_version.clone(),
+                options,
+                Box::new(move |cc| {
+                    egui_extras::install_image_loaders(&cc.egui_ctx);
+                    Ok(Box::new(App::cc(cc, resolution, app)))
+                }),
+            )
+            .unwrap();
+        } else {
+            options.renderer = eframe::Renderer::Wgpu;
+            eframe::run_native(
+                &app.name_version.clone(),
+                options,
+                Box::new(move |cc| {
+                    egui_extras::install_image_loaders(&cc.egui_ctx);
+                    Ok(Box::new(App::cc(cc, resolution, app)))
+                }),
+            )
+            .unwrap();
+        }
     }
 }

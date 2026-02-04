@@ -1,5 +1,6 @@
 use crate::app::ErrorState;
 use crate::app::Restart;
+use crate::app::panels::middle::common::toggle::toggle_ui_compact;
 use crate::app::panels::middle::*;
 use crate::components::gupax::*;
 use crate::components::update::Update;
@@ -332,6 +333,26 @@ impl Gupax {
                             });
                         });
                     })
+                });
+            });
+            debug!("Gupax Tab | Rendering Renderer chooser");
+            ui.group(|ui| {
+                ui.vertical_centered(|ui| {
+                    let label = ui
+                        .add(Label::new(
+                            RichText::new("[WGPU]/[GLOW] Renderer")
+                                .underline()
+                                .color(LIGHT_GRAY),
+                        ))
+                        .on_hover_text(GUPAX_RENDERER);
+                    ui.separator();
+                    if toggle_ui_compact(&mut self.renderer_use_glow, ui)
+                        .labelled_by(label.id)
+                        .on_hover_text("Disabled: WGPU\nEnabled: GLOW")
+                        .clicked()
+                    {
+                        *restart.lock().unwrap() = Restart::Yes
+                    }
                 });
             });
             debug!("Gupax Tab | Rendering Notification checkbox");

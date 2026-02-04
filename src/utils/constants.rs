@@ -336,8 +336,7 @@ pub const GUPAX_UPDATE: &str = "Check for updates on Gupax and bundled versions 
 pub const GUPAX_AUTO_UPDATE: &str = "Automatically check for updates at startup";
 pub const GUPAX_AUTO_CRAWL: &str = "Start the P2Pool compatible Nodes Finder at startup.\nIt will crawl the monero network to find nodes if the ones already found are not online";
 pub const GUPAX_BUNDLED_UPDATE: &str = "Update XMRig and P2Pool with bundled versions of latest Gupax. It will replace any present xmrig and p2pool binary in their specified path.";
-pub const GUPAX_SHOULD_RESTART: &str =
-    "Gupax was updated. A restart is recommended but not required";
+pub const GUPAX_SHOULD_RESTART: &str = "A restart is required to apply changes";
 // #[cfg(not(target_os = "macos"))]
 // pub const GUPAX_UPDATE_VIA_TOR:   &str = "Update through the Tor network. Tor is embedded within Gupax; a Tor system proxy is not required";
 // #[cfg(target_os = "macos")] // Arti library has issues on macOS
@@ -350,6 +349,7 @@ pub const GUPAX_AUTO_XMRIG: &str = "Automatically start XMRig on Gupax startup. 
 pub const GUPAX_AUTO_XMRIG_PROXY: &str = "Automatically start XMRig-Proxy on Gupax startup.";
 pub const GUPAX_AUTO_XVB: &str = "Automatically start XvB on Gupax startup. This option will fail if your XvB settings aren't valid!";
 pub const GUPAX_ADJUST: &str = "Adjust and set the width/height of the Gupax window";
+pub const GUPAX_RENDERER: &str = "If you experience crashs or freezes, try the other renderer.";
 pub const GUPAX_WIDTH: &str = "Set the width of the Gupax window";
 pub const GUPAX_HEIGHT: &str = "Set the height of the Gupax window";
 pub const GUPAX_SCALE: &str =

@@ -230,6 +230,7 @@ pub struct Gupax {
     pub show_processes: Vec<ProcessName>,
     pub notifications: Vec<Notification>,
     pub theme: GupaxTheme,
+    pub renderer_use_glow: bool,
 }
 
 #[derive(Default, Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -712,6 +713,7 @@ impl Default for Gupax {
             show_processes: vec![ProcessName::P2pool, ProcessName::Xmrig],
             notifications: Notification::iter().collect(),
             theme: GupaxTheme::default(),
+            renderer_use_glow: false,
         }
     }
 }
