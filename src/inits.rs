@@ -1,3 +1,4 @@
+use crate::app::App;
 #[cfg(not(feature = "distro"))]
 use crate::components::update::Update;
 use crate::components::update::check_binary_path;
@@ -9,7 +10,6 @@ use crate::utils::constants::{
 use crate::utils::regex::Regexes;
 use std::io::Write;
 //---------------------------------------------------------------------------------------------------- Init functions
-use crate::app::App;
 use crate::disk::state::*;
 use crate::{components::node::Ping, miscs::clamp_scale};
 use crate::{info, warn};

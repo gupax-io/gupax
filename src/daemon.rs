@@ -1,19 +1,19 @@
-use std::{io, process::exit, sync::Arc, thread::sleep, time::Duration};
+use std::{io, process::exit, thread::sleep, time::Duration};
 
 use crate::{
-    app::App,
+    app::{App, AppEgui},
     helper::{Helper, xvb::nodes::Pool},
 };
 
-pub fn start_daemon(app: &Arc<App>) {
+pub fn start_daemon(app: AppEgui) {
     // if the app receives Ctrl+C, make sure to terminate all services
     let app_ctrlc = app.clone();
     ctrlc::set_handler(move || {
-        Helper::stop_xvb(&app_ctrlc.helper);
-        Helper::stop_xmrig(&app_ctrlc.helper);
-        Helper::stop_xp(&app_ctrlc.helper);
-        Helper::stop_p2pool(&app_ctrlc.helper);
-        Helper::stop_node(&app_ctrlc.helper);
+        Helper::stop_xvb(&app_ctrlc.inner.lock().helper);
+        Helper::stop_xmrig(&app_ctrlc.inner.lock().helper);
+        Helper::stop_xp(&app_ctrlc.inner.lock().helper);
+        Helper::stop_p2pool(&app_ctrlc.inner.lock().helper);
+        Helper::stop_node(&app_ctrlc.inner.lock().helper);
         exit(0);
     })
     .expect("Error setting Ctrl-C handler");
@@ -23,7 +23,7 @@ pub fn start_daemon(app: &Arc<App>) {
             Ok(0) => sleep(Duration::from_secs(10)),
             Ok(_) => {
                 if input.contains("s") {
-                    print_all_services(app);
+                    print_all_services(&app.inner.lock());
                 } else {
                     println!("Press s then Enter to print the Status of started services");
                 }
@@ -36,7 +36,7 @@ pub fn start_daemon(app: &Arc<App>) {
     }
 }
 
-fn print_all_services(app: &Arc<App>) {
+fn print_all_services(app: &App) {
     println!("{}", status_gupax(app));
     if app.node.lock().unwrap().is_alive()
         && app
@@ -86,7 +86,7 @@ fn print_all_services(app: &Arc<App>) {
     }
 }
 
-fn status_gupax(app: &Arc<App>) -> String {
+fn status_gupax(app: &App) -> String {
     let sys = app.pub_sys.lock().unwrap();
     format!(
         "
@@ -106,7 +106,7 @@ CPU model:     {}
         sys.system_cpu_model
     )
 }
-fn status_node(app: &Arc<App>) -> String {
+fn status_node(app: &App) -> String {
     let api = app.node_api.lock().unwrap();
     format!(
         "
@@ -134,7 +134,7 @@ Status:             {}
         api.status,
     )
 }
-fn status_p2pool(app: &Arc<App>) -> String {
+fn status_p2pool(app: &App) -> String {
     let api = app.p2pool_api.lock().unwrap();
     let img = app.p2pool_img.lock().unwrap();
     let text_node = if let Some(node) = &api.current_node {
@@ -172,7 +172,7 @@ Address:                   {}
         &img.address
     )
 }
-fn status_xmrig(app: &Arc<App>) -> String {
+fn status_xmrig(app: &App) -> String {
     let api = app.xmrig_api.lock().unwrap();
     let img = app.xmrig_img.lock().unwrap();
     format!(
@@ -197,7 +197,7 @@ Threads:                     {}/{}
         &app.max_threads
     )
 }
-fn status_xp(app: &Arc<App>) -> String {
+fn status_xp(app: &App) -> String {
     let api = app.xmrig_proxy_api.lock().unwrap();
     format!(
         "
@@ -216,7 +216,7 @@ Pool:                        {}
         &api.pool.as_ref().unwrap_or(&Pool::Unknown),
     )
 }
-fn status_xvb(app: &Arc<App>) -> String {
+fn status_xvb(app: &App) -> String {
     let api = app.xvb_api.lock().unwrap();
     let estimations = api
         .stats_pub

@@ -58,6 +58,7 @@ use crate::utils::sudo::SudoState;
 use copy_dir::copy_dir;
 use derive_more::derive::Display;
 use eframe::CreationContext;
+use eframe::Renderer;
 use egui::Context;
 use egui::Vec2;
 use egui::vec2;
@@ -91,7 +92,11 @@ pub type BackupNodes = Arc<Mutex<Vec<PoolNode>>>;
 // The state of the outer main [App].
 // See the [State] struct in [state.rs] for the
 // actual inner state of the tab settings.
-#[allow(dead_code)]
+#[derive(Clone)]
+pub struct AppEgui {
+    pub inner: Arc<egui::mutex::Mutex<App>>,
+}
+#[allow(unused)]
 pub struct App {
     // Misc state
     pub tab: Tab,   // What tab are we on?
@@ -186,18 +191,27 @@ pub struct App {
     pub xmrig_outside_warning_acknowledge: bool,
 }
 
-impl App {
+impl AppEgui {
+    pub fn new(now: Instant, args: &Cli) -> Self {
+        let inner = App::new(now, args);
+        Self {
+            inner: Arc::new(egui::mutex::Mutex::new(inner)),
+        }
+    }
     #[cold]
     #[inline(never)]
     pub fn cc(cc: &CreationContext<'_>, resolution: Vec2, app: Self) -> Self {
         init_text_styles(
             &cc.egui_ctx,
-            crate::miscs::clamp_scale(app.state.gupax.selected_scale),
+            crate::miscs::clamp_scale(app.inner.lock().state.gupax.selected_scale),
         );
-        app.set_theme(&cc.egui_ctx);
-        Self { resolution, ..app }
+        app.inner.lock().set_theme(&cc.egui_ctx);
+        app.inner.lock().resolution = resolution;
+        app
     }
+}
 
+impl App {
     pub fn set_theme(&self, ctx: &Context) {
         match self.state.gupax.theme {
             GupaxTheme::Dark => ctx.set_visuals(VISUALS_GUPAX_DARK.clone()),
@@ -873,6 +887,13 @@ impl App {
                     );
                 }
             }
+        }
+    }
+    pub fn current_renderer(&self) -> Renderer {
+        if self.state.gupax.renderer_use_glow {
+            eframe::Renderer::Glow
+        } else {
+            eframe::Renderer::Wgpu
         }
     }
 }
