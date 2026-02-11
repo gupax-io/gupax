@@ -99,6 +99,9 @@ listeners = "0.3"
 notify-rust = "4.11"
 ## handle Ctrl+C for daemon mode
 ctrlc = {version="3.5", features=["termination"]}
+
+tokio-stream = {version = "0.1", default-features=false}
+thiserror = "2.0"
 # Unix dependencies
 [target.'cfg(unix)'.dependencies]
 tar = "0.4.44"

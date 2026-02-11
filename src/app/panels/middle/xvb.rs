@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::helper::xvb::algorithm::{ManualDonationLevel, XvbModeChoice};
 use std::sync::{Arc, Mutex};
 
 use egui::{Align, Image, Label, RichText, ScrollArea, TextStyle, Ui};
@@ -26,12 +27,9 @@ use strum::EnumCount;
 use crate::app::panels::middle::common::console::console;
 use crate::app::panels::middle::common::header_tab::header_tab;
 use crate::app::panels::middle::common::toggle::toggle_ui_compact;
-use crate::disk::state::{ManualDonationLevel, ManualDonationMetric, XvbMode};
 use crate::helper::ProcessName;
-use crate::helper::xrig::xmrig::PubXmrigApi;
-use crate::helper::xrig::xmrig_proxy::PubXmrigProxyApi;
 use crate::helper::xvb::PubXvbApi;
-use crate::helper::xvb::priv_stats::RuntimeMode;
+use crate::helper::xvb::algorithm::{ManualDonationMetric, XvbMode};
 use crate::miscs::height_txt_before_button;
 use crate::utils::constants::{
     ORANGE, XVB_DONATED_1H_FIELD, XVB_DONATED_24H_FIELD, XVB_DONATION_LEVEL_DONOR_HELP,
@@ -57,8 +55,6 @@ impl crate::disk::state::Xvb {
         _ctx: &egui::Context,
         ui: &mut egui::Ui,
         api: &Arc<Mutex<PubXvbApi>>,
-        gui_api_xmrig: &Arc<Mutex<PubXmrigApi>>,
-        gui_api_xp: &Arc<Mutex<PubXmrigProxyApi>>,
         is_alive: bool,
     ) {
         // logo and website link
@@ -92,12 +88,8 @@ impl crate::disk::state::Xvb {
         // --------------------------- XVB Simple -------------------------------------------
         if self.simple {
             ui.add_space(SPACE);
-            ui.checkbox(&mut self.simple_hero_mode, "Hero Mode").on_hover_text(XVB_HERO_SELECT);
-            // set runtime mode immediately if we are on simple mode.
-            if self.simple_hero_mode {
-                api.lock().unwrap().stats_priv.runtime_mode = RuntimeMode::Hero;
-            }  else {
-                api.lock().unwrap().stats_priv.runtime_mode = RuntimeMode::Auto;
+            if ui.checkbox(&mut self.simple_hero_mode, "Hero Mode").on_hover_text(XVB_HERO_SELECT).clicked() {
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
             }
         }
     });
@@ -116,135 +108,136 @@ impl crate::disk::state::Xvb {
                         egui::ComboBox::from_label("").height(XvbMode::COUNT as f32 * (ui.text_style_height(&TextStyle::Button) + (ui.spacing().button_padding.y * 2.0) + ui.spacing().item_spacing.y))
                         .selected_text(self.mode.to_string())
                         .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.mode, XvbMode::Auto,
-                                     XvbMode::Auto.to_string());
-                                ui.selectable_value(&mut self.mode, XvbMode::Hero,
-                                     XvbMode::Hero.to_string()).on_hover_text(XVB_HERO_SELECT);
-                                ui.selectable_value(&mut self.mode, XvbMode::ManualXvb,
-                                     XvbMode::ManualXvb.to_string())
-                                .on_hover_text(XVB_MODE_MANUAL_XVB_HELP);
-                                ui.selectable_value(&mut self.mode, XvbMode::ManualP2pool,
-                                     XvbMode::ManualP2pool.to_string())
-                                .on_hover_text(XVB_MODE_MANUAL_P2POOL_HELP);
-                                ui.selectable_value(&mut self.mode, XvbMode::ManualDonationLevel,
-                                     XvbMode::ManualDonationLevel.to_string())
-                                .on_hover_text(XVB_MODE_MANUAL_DONATION_LEVEL_HELP);
-                        });
-                        if self.mode == XvbMode::ManualXvb || self.mode == XvbMode::ManualP2pool {
-
-                            ui.add_space(SPACE);
-
-                            let default_xmrig_hashrate = match self.manual_donation_metric {
-                                ManualDonationMetric::Hash => 1_000.0,
-                                ManualDonationMetric::Kilo => 1_000_000.0,
-                                ManualDonationMetric::Mega => 1_000_000_000.0
-                            };
-                            // use proxy HR in priority, or use xmrig or default.
-                            let mut hashrate_xmrig = {
-                                if gui_api_xp.lock().unwrap().hashrate_10m > 0.0 {
-                                    gui_api_xp.lock().unwrap().hashrate_10m
-                                } else if gui_api_xmrig.lock().unwrap().hashrate_raw_15m > 0.0 {
-                                    gui_api_xmrig.lock().unwrap().hashrate_raw_15m
-                                } else if gui_api_xmrig.lock().unwrap().hashrate_raw_1m > 0.0 {
-                                    gui_api_xmrig.lock().unwrap().hashrate_raw_1m
-                                } else if gui_api_xmrig.lock().unwrap().hashrate_raw > 0.0 {
-                                    gui_api_xmrig.lock().unwrap().hashrate_raw
-                                } else {
-                                    default_xmrig_hashrate
-                                }
-                            };
-                            // Adjust maximum slider amount based on slider metric
-                            if self.manual_donation_metric == ManualDonationMetric::Kilo {
-                                hashrate_xmrig /= 1000.0;
-                            } else if self.manual_donation_metric == ManualDonationMetric::Mega {
-                                hashrate_xmrig /= 1_000_000.0;
+                                if ui.selectable_value(&mut self.mode, XvbModeChoice::Auto,
+                                     XvbModeChoice::Auto.to_string()).clicked() {
+                                     dbg!(&self.mode);
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                                 }
+                                if ui.selectable_value(&mut self.mode, XvbModeChoice::Hero,
+                                     XvbModeChoice::Hero.to_string()).on_hover_text(XVB_HERO_SELECT).clicked() {
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                                 }
+                                if ui.selectable_value(&mut self.mode, XvbModeChoice::ManualXvb,
+                                     XvbModeChoice::ManualXvb.to_string())
+                                .on_hover_text(XVB_MODE_MANUAL_XVB_HELP).clicked() {
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                             }
-
-
-                            let slider_help_text = if self.mode == XvbMode::ManualXvb {
-                                XVB_MANUAL_SLIDER_MANUAL_XVB_HELP
-                            } else {
-                                XVB_MANUAL_SLIDER_MANUAL_P2POOL_HELP
-                            };
-
+                                if ui.selectable_value(&mut self.mode, XvbModeChoice::ManualP2pool,
+                                     XvbModeChoice::ManualP2pool.to_string())
+                                .on_hover_text(XVB_MODE_MANUAL_P2POOL_HELP).clicked() {
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                            }
+                                if ui.selectable_value(&mut self.mode, XvbModeChoice::ManualDonationLevel,
+                                     XvbModeChoice::ManualDonationLevel.to_string())
+                                .on_hover_text(XVB_MODE_MANUAL_DONATION_LEVEL_HELP).clicked() {
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                            }
+                        });
+                        if self.mode == XvbModeChoice::ManualXvb {
+                            ui.add_space(SPACE);
+                            let slider_help_text = XVB_MANUAL_SLIDER_MANUAL_XVB_HELP;
                             ui.horizontal(|ui| {
-
-                                if ui.add_sized([0.0, text_height],egui::Button::selectable(self.manual_donation_metric == ManualDonationMetric::Hash, "Hash")).clicked() {
-                                    self.manual_donation_metric = ManualDonationMetric::Hash;
-                                    self.manual_slider_amount = self.manual_amount_raw;
+                                if ui.add_sized([0.0, text_height],egui::Button::selectable(self.manual_xvb_donation_metric == ManualDonationMetric::Hash, "Hash")).clicked() {
+                                    self.manual_xvb_donation_metric = ManualDonationMetric::Hash;
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                                 }
-                                if ui.add_sized([0.0, text_height],egui::Button::selectable(self.manual_donation_metric == ManualDonationMetric::Kilo, "Kilo")).clicked() {
-                                    self.manual_donation_metric = ManualDonationMetric::Kilo;
-                                    self.manual_slider_amount = self.manual_amount_raw / 1000.0;
+                                if ui.add_sized([0.0, text_height],egui::Button::selectable(self.manual_xvb_donation_metric == ManualDonationMetric::Kilo, "Kilo")).clicked() {
+                                    self.manual_xvb_donation_metric = ManualDonationMetric::Kilo;
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                                 };
-                                if ui.add_sized([0.0, text_height],egui::Button::selectable(self.manual_donation_metric == ManualDonationMetric::Mega, "Mega")).clicked() {
-                                    self.manual_donation_metric = ManualDonationMetric::Mega;
-                                    self.manual_slider_amount = self.manual_amount_raw / 1_000_000.0;
+                                if ui.add_sized([0.0, text_height],egui::Button::selectable(self.manual_xvb_donation_metric == ManualDonationMetric::Mega, "Mega")).clicked() {
+                                    self.manual_xvb_donation_metric = ManualDonationMetric::Mega;
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                                 };
                                 ui.spacing_mut().slider_width = ui.text_style_height(&TextStyle::Button) * 18.0;
-                                ui.add_sized(
+                                if ui.add_sized(
                                     [ui.available_width(), text_height],
-                                    egui::Slider::new(&mut self.manual_slider_amount, 0.0..=(hashrate_xmrig as f64))
-                                    .text(self.manual_donation_metric.to_string())
+                                    egui::Slider::new(&mut self.manual_xvb_slider_amount, 0.0..=1000.0)
+                                    .text(self.manual_xvb_donation_metric.to_string())
                                     .max_decimals(3)
-                                ).on_hover_text(slider_help_text);
+                                ).on_hover_text(slider_help_text).changed() {
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                                }
 
                             });
             ui.add_space(SPACE);
                         }
+                        if self.mode == XvbModeChoice::ManualP2pool {
+                            ui.add_space(SPACE);
+                            let slider_help_text = XVB_MANUAL_SLIDER_MANUAL_P2POOL_HELP;
+                            ui.horizontal(|ui| {
 
-                        if self.mode ==  XvbMode::ManualDonationLevel {
+                                if ui.add_sized([0.0, text_height],egui::Button::selectable(self.manual_p2pool_donation_metric == ManualDonationMetric::Hash, "Hash")).clicked() {
+                                    self.manual_p2pool_donation_metric = ManualDonationMetric::Hash;
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                                }
+                                if ui.add_sized([0.0, text_height],egui::Button::selectable(self.manual_p2pool_donation_metric == ManualDonationMetric::Kilo, "Kilo")).clicked() {
+                                    self.manual_p2pool_donation_metric = ManualDonationMetric::Kilo;
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                                };
+                                if ui.add_sized([0.0, text_height],egui::Button::selectable(self.manual_p2pool_donation_metric == ManualDonationMetric::Mega, "Mega")).clicked() {
+                                    self.manual_p2pool_donation_metric = ManualDonationMetric::Mega;
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                                };
+                                ui.spacing_mut().slider_width = ui.text_style_height(&TextStyle::Button) * 18.0;
+                                if ui.add_sized(
+                                    [ui.available_width(), text_height],
+                                    egui::Slider::new(&mut self.manual_p2pool_slider_amount, 0.0..=1000.0)
+                                    .text(self.manual_p2pool_donation_metric.to_string())
+                                    .max_decimals(3)
+                                ).on_hover_text(slider_help_text).changed() {
+                                    api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                                }
+                            });
+            ui.add_space(SPACE);
+                        }
+                        if matches!(self.mode, XvbModeChoice::ManualDonationLevel) {
                             ui.add_space(SPACE);
                             ui.horizontal(|ui| {
-                            ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::Donor,
+                            if ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::Donor,
                                 ManualDonationLevel::Donor.to_string())
-                            .on_hover_text(XVB_DONATION_LEVEL_DONOR_HELP);
-                            ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::DonorVIP,
+                            .on_hover_text(XVB_DONATION_LEVEL_DONOR_HELP).clicked() {
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                        }
+                            if ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::DonorVIP,
                                 ManualDonationLevel::DonorVIP.to_string())
-                            .on_hover_text(XVB_DONATION_LEVEL_VIP_DONOR_HELP);
-                            ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::DonorWhale,
+                            .on_hover_text(XVB_DONATION_LEVEL_VIP_DONOR_HELP)
+                                .clicked() {
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                                }
+                            if ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::DonorWhale,
                                 ManualDonationLevel::DonorWhale.to_string())
-                            .on_hover_text(XVB_DONATION_LEVEL_WHALE_DONOR_HELP);
-                            ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::DonorMega,
+                            .on_hover_text(XVB_DONATION_LEVEL_WHALE_DONOR_HELP).clicked() {
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                        }
+                            if ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::DonorMega,
                                 ManualDonationLevel::DonorMega.to_string())
-                            .on_hover_text(XVB_DONATION_LEVEL_MEGA_DONOR_HELP);
+                            .on_hover_text(XVB_DONATION_LEVEL_MEGA_DONOR_HELP).clicked() {
+                api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
+                        }
 
-                            api.lock().unwrap().stats_priv.runtime_manual_donation_level = self.manual_donation_level.clone().into();
                             });
             ui.add_space(SPACE);
                         }
                     });
                 });
 
-            // Update manual_amount_raw based on slider
-            match self.manual_donation_metric {
-                ManualDonationMetric::Hash => {
-                    self.manual_amount_raw = self.manual_slider_amount;
-                },
-                ManualDonationMetric::Kilo => {
-                    self.manual_amount_raw = self.manual_slider_amount * 1000.0;
-                },
-                ManualDonationMetric::Mega => {
-                    self.manual_amount_raw = self.manual_slider_amount * 1_000_000.0;
-                }
-            }
 
-            // Set runtime_mode & runtime_manual_amount
-            api.lock().unwrap().stats_priv.runtime_mode = self.mode.clone().into();
-            api.lock().unwrap().stats_priv.runtime_manual_amount = self.manual_amount_raw;
          ui.add_space(SPACE);
-        let p2pool_buffer_enabled = matches!(self.mode, XvbMode::Auto | XvbMode::Hero);
+        let p2pool_buffer_enabled = matches!(self.mode, XvbModeChoice::Auto | XvbModeChoice::Hero);
 
 
          ui.horizontal(|ui|{
             // allow user to modify the buffer for p2pool
             // button
             ui.add_enabled_ui(p2pool_buffer_enabled, |ui|{
- ui.add_sized(
+ if ui.add_sized(
                 [0.0 , text_height],
-                egui::Slider::new(&mut self.p2pool_buffer, -100..=100)
+                egui::Slider::new(&mut self.algo_config.p2pool_buffer, -100..=100)
                 .text("% P2Pool Buffer" )
-            ).on_hover_text(XVB_P2POOL_BUFFER);
+            ).on_hover_text(XVB_P2POOL_BUFFER).changed() {
+                api.lock().unwrap().algo_config.p2pool_buffer = self.algo_config.p2pool_buffer;
+            }
 
             }).response.on_disabled_hover_text(XVB_P2POOL_BUFFER);
 
@@ -252,8 +245,8 @@ impl crate::disk::state::Xvb {
          // p2pool sidechain HR or stratum data
             if ui.add_sized(
                 [0.0, text_height],
-                egui::Checkbox::new(&mut self.use_p2pool_sidechain_hr, "Watch P2Pool Sidechain HR")).on_hover_text(XVB_SIDECHAIN).clicked() {
-                api.lock().unwrap().use_p2pool_sidechain_hr = self.use_p2pool_sidechain_hr;
+                egui::Checkbox::new(&mut self.algo_config.p2pool_watch_sidechain, "Watch P2Pool Sidechain HR")).on_hover_text(XVB_SIDECHAIN).clicked() {
+                api.lock().unwrap().algo_config.p2pool_watch_sidechain = self.algo_config.p2pool_watch_sidechain;
             }
          });
         // Allow user to choose XvB pool manually
@@ -295,14 +288,14 @@ impl crate::disk::state::Xvb {
                     stat_box(ui, XVB_FAILURE_FIELD, &priv_stats.fails.to_string(), height_column);
                     stat_box(ui, XVB_DONATED_1H_FIELD,
                                         &[
-                                            Float::from_3(priv_stats.donor_1hr_avg as f64).to_string(),
+                                            Float::from_3((priv_stats.donor_1hr_avg / 1000.0) as f64).to_string(),
                                             " kH/s".to_string(),
                                         ]
                                         .concat()
                         ,  height_column);
                     stat_box(ui, XVB_DONATED_24H_FIELD,
                                         &[
-                                            Float::from_3(priv_stats.donor_24hr_avg as f64).to_string(),
+                                            Float::from_3((priv_stats.donor_24hr_avg / 1000.0) as f64).to_string(),
                                             " kH/s".to_string(),
                                         ]
                                         .concat()

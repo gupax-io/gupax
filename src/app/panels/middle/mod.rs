@@ -158,8 +158,6 @@ impl crate::app::App {
                         ctx,
                         ui,
                         &self.xvb_api,
-                        &self.xmrig_api,
-                        &self.xmrig_proxy_api,
                         states.is_alive(ProcessName::Xvb),
                     );
                 }

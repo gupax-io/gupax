@@ -171,21 +171,27 @@ mod test {
             zmq_rig = "18083"
 
             [xvb]
-			simple = true
-			simple_hero_mode = true
-			mode = "Hero"
-			manual_amount_raw = 1000.0
-			manual_slider_amount = 1000.0
-			manual_donation_level = "Donor"
-      		manual_donation_metric = "Hash"
-            token = ""
-            hero = false
-            node = "Europe"
-            p2pool_buffer = 5
-            use_p2pool_sidechain_hr = false
+            simple = false
+            simple_hero_mode = false
+            mode = "ManualXvb"
+            manual_xvb_donation_metric = "Hash"
+            manual_p2pool_donation_metric = "Hash"
+            manual_xvb_slider_amount = 135.0
+            manual_p2pool_slider_amount = 265.0
+            manual_donation_level = "Donor"
             console_height = 360
             manual_pool_enabled = false
             manual_pool_eu = true
+            
+            [xvb.algo_config]
+            min_share = 1
+            p2pool_watch_sidechain = false
+            p2pool_buffer = 25
+            catch_up = true
+
+            [xvb.algo_config.timeframe]
+            secs = 60
+            nanos = 0
 
             [node]
             simple = false

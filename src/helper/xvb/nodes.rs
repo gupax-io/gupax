@@ -39,13 +39,12 @@ use crate::{
 };
 
 use super::PubXvbApi;
-#[derive(Clone, Debug, Default, PartialEq, Display, Deserialize)]
+#[derive(Clone, Debug, Display, Deserialize, Default)]
 pub enum Pool {
     #[display("XvB North America Pool")]
-    XvBNorthAmerica,
-    #[default]
+    XvBNorthAmerica(String),
     #[display("XvB European Pool")]
-    XvBEurope,
+    XvBEurope(String),
     #[display("Local P2pool")]
     P2pool(u16),
     #[display("Xmrig Proxy")]
@@ -53,13 +52,15 @@ pub enum Pool {
     #[display("Custom Pool")]
     Custom(String, u16),
     #[display("Not connected to any pool")]
+    #[default]
     Unknown,
 }
+
 impl Pool {
     pub fn url(&self) -> String {
         match self {
-            Self::XvBNorthAmerica => String::from(XVB_NODE_NA),
-            Self::XvBEurope => String::from(XVB_NODE_EU),
+            Self::XvBNorthAmerica(_) => String::from(XVB_NODE_NA),
+            Self::XvBEurope(_) => String::from(XVB_NODE_EU),
             Self::P2pool(_) => String::from("127.0.0.1"),
             Self::XmrigProxy(_) => String::from("127.0.0.1"),
             Self::Custom(url, _) => url.clone(),
@@ -68,24 +69,24 @@ impl Pool {
     }
     pub fn port(&self) -> String {
         match self {
-            Self::XvBNorthAmerica | Self::XvBEurope => String::from(XVB_NODE_PORT),
+            Self::XvBNorthAmerica(_) | Self::XvBEurope(_) => String::from(XVB_NODE_PORT),
             Self::P2pool(port) => port.to_string(),
             Self::XmrigProxy(port) => port.to_string(),
             Self::Custom(_, port) => port.to_string(),
             _ => "???".to_string(),
         }
     }
-    pub fn user(&self, address: &str) -> String {
+    pub fn user(&self) -> String {
         match self {
-            Self::XvBNorthAmerica => address.chars().take(8).collect(),
-            Self::XvBEurope => address.chars().take(8).collect(),
+            Self::XvBNorthAmerica(address) => address.chars().take(8).collect(),
+            Self::XvBEurope(address) => address.chars().take(8).collect(),
             _ => GUPAX_VERSION_UNDERSCORE.to_string(),
         }
     }
     pub fn tls(&self) -> bool {
         match self {
-            Self::XvBNorthAmerica => true,
-            Self::XvBEurope => true,
+            Self::XvBNorthAmerica(_) => true,
+            Self::XvBEurope(_) => true,
             Self::P2pool(_) => false,
             Self::XmrigProxy(_) => false,
             Self::Custom(_, _) => false,
@@ -94,8 +95,8 @@ impl Pool {
     }
     pub fn keepalive(&self) -> bool {
         match self {
-            Self::XvBNorthAmerica => true,
-            Self::XvBEurope => true,
+            Self::XvBNorthAmerica(_) => true,
+            Self::XvBEurope(_) => true,
             Self::P2pool(_) => false,
             Self::XmrigProxy(_) => false,
             Self::Custom(_, _) => false,
@@ -114,14 +115,18 @@ impl Pool {
         xvb_state: &Xvb,
     ) {
         // ping XvB nodes, or only one if set manual
+        let address = p2pool_state.address.clone();
         let xvb_pools_to_ping = if xvb_state.manual_pool_enabled {
             if xvb_state.manual_pool_eu {
-                vec![Pool::XvBEurope]
+                vec![Pool::XvBEurope(address)]
             } else {
-                vec![Pool::XvBNorthAmerica]
+                vec![Pool::XvBNorthAmerica(address)]
             }
         } else {
-            vec![Pool::XvBNorthAmerica, Pool::XvBEurope]
+            vec![
+                Pool::XvBNorthAmerica(address.clone()),
+                Pool::XvBEurope(address),
+            ]
         };
 
         // prepare the ping job
@@ -139,10 +144,12 @@ impl Pool {
         // ping pools at the same time
         let mut results = vec![];
         for handle in handles {
-            let result = handle
-                .await
-                .ok()
-                .unwrap_or_else(|| (Err(anyhow::Error::msg("")), Pool::default()));
+            let result = handle.await.ok().unwrap_or_else(|| {
+                (
+                    Err(anyhow::Error::msg("")),
+                    Pool::XvBEurope(p2pool_state.address.clone()),
+                )
+            });
             results.push((result.0.ok(), result.1));
         }
 
@@ -213,6 +220,7 @@ impl Pool {
         process_xvb: &Arc<Mutex<Process>>,
         pub_api_xvb: &Arc<Mutex<PubXvbApi>>,
         process: ProcessName,
+        address: String,
     ) {
         if contains_error(line) || contains_timeout(line) {
             let current_node = pub_api_xvb.lock().unwrap().current_pool.clone();
@@ -234,7 +242,8 @@ impl Pool {
             if pool.is_none() {
                 error!("{process} PTY Parse | pool is not understood, switching to backup.");
                 // update with default will choose which XvB to prefer. Will update XvB to use p2pool.
-                process_xvb.lock().unwrap().signal = ProcessSignal::UpdatePools(Pool::default());
+                process_xvb.lock().unwrap().signal =
+                    ProcessSignal::UpdatePools(Pool::XvBEurope(address));
             } else if
             // if pool detected is different than current pool known by XvB
             pool != pub_api_xvb.lock().unwrap().current_pool {
@@ -242,5 +251,11 @@ impl Pool {
                 pub_api_xvb.lock().unwrap().current_pool = pool;
             }
         }
+    }
+}
+
+impl PartialEq for Pool {
+    fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 }

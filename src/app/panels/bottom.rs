@@ -7,6 +7,7 @@ use crate::disk::node::Node;
 use crate::disk::pool::Pool;
 use crate::disk::state::{Gupax, GupaxTheme, State};
 use crate::helper::node::{CheckLocalOutsideNode, spawn_local_outside_checker};
+use crate::helper::xvb::algorithm::XvbMode;
 use crate::helper::{Helper, ProcessName, ProcessSignal, ProcessState};
 use crate::utils::constants::*;
 use crate::utils::errors::{ErrorButtons, ErrorFerris};
@@ -531,7 +532,7 @@ impl crate::app::App {
         );
     }
     fn xvb_submenu(&mut self, ui: &mut Ui) {
-        Self::simple_advanced_submenu(ui, &mut self.state.xvb.simple, (XVB_SIMPLE, XVB_ADVANCED));
+        self.simple_advanced_submenu_xvb(ui, (XVB_SIMPLE, XVB_ADVANCED));
     }
     fn status_submenu(state_submenu: &mut SubmenuStatus, ui: &mut Ui) {
         ui.group(|ui| {
@@ -582,6 +583,38 @@ impl crate::app::App {
         });
     }
 
+    fn simple_advanced_submenu_xvb(&mut self, ui: &mut Ui, hover_text: (&str, &str)) {
+        let spacing = spacing(ui);
+        let width = ((ui.available_width() - spacing) / 4.0).max(0.0);
+
+        ui.group(|ui| {
+            if ui
+                .add_sized(
+                    [width, ui.available_height()],
+                    Button::selectable(self.state.xvb.simple, "Simple"),
+                )
+                // .selectable_label(*value, "Simple")
+                .on_hover_text(hover_text.0)
+                .clicked()
+            {
+                self.state.xvb.simple = true;
+                self.xvb_api.lock().unwrap().runtime_mode = XvbMode::from(&self.state.xvb);
+            }
+            ui.separator();
+            if ui
+                .add_sized(
+                    [width, ui.available_height()],
+                    Button::selectable(!self.state.xvb.simple, "Advanced"),
+                )
+                // .selectable_label(*value, "Advanced")
+                .on_hover_text(hover_text.1)
+                .clicked()
+            {
+                self.state.xvb.simple = false;
+                self.xvb_api.lock().unwrap().runtime_mode = XvbMode::from(&self.state.xvb);
+            }
+        });
+    }
     fn simple_advanced_submenu(ui: &mut Ui, simple: &mut bool, hover_text: (&str, &str)) {
         let spacing = spacing(ui);
         let width = ((ui.available_width() - spacing) / 4.0).max(0.0);

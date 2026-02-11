@@ -32,7 +32,7 @@ use tokio::spawn;
 
 use crate::disk::state::{P2pool, StartOptionsMode, XmrigProxy};
 use crate::helper::p2pool::ImgP2pool;
-use crate::helper::xrig::current_api_url_xrig;
+use crate::helper::xrig::HashrateProvider;
 use crate::human::{HumanNumber, HumanTime};
 use crate::miscs::client;
 use crate::{
@@ -40,7 +40,6 @@ use crate::{
     helper::{
         Helper, Process, ProcessName, ProcessSignal, ProcessState, check_died, check_user_input,
         signal_end, sleep_end_loop,
-        xrig::update_xmrig_config,
         xvb::{PubXvbApi, nodes::Pool},
     },
     macros::sleep,
@@ -104,6 +103,7 @@ impl Helper {
                     &process_xvb,
                     pub_api_xvb,
                     ProcessName::XmrigProxy,
+                    p2pool_state.address.clone(),
                 );
             }
             //			println!("{}", line); // For debugging.
@@ -521,18 +521,12 @@ impl Helper {
                 {
                     last_redirect_request = Instant::now();
                     info!("redirect local xmrig instance to xmrig-proxy");
-                    let api_uri =
-                        current_api_url_xrig(true, Some(&xmrig_img.lock().unwrap()), None);
-                    if let Err(err) = update_xmrig_config(
-                        &client,
-                        &api_uri,
-                        &xmrig_img.lock().unwrap().token,
-                        &pool,
-                        "",
-                        GUPAX_VERSION_UNDERSCORE,
-                    )
-                    .await
-                    {
+                    let hashrate_provider = HashrateProvider::Xmrig(
+                        pub_api_xmrig.clone(),
+                        xmrig_img.clone(),
+                        client.clone(),
+                    );
+                    if let Err(err) = hashrate_provider.update_config(&pool).await {
                         // show to console error about updating xmrig config
                         warn!("XMRig-Proxy Process | Failed request HTTP API Xmrig");
                         output_console(

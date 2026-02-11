@@ -11,8 +11,12 @@ use crate::{
     components::node::RemoteNode,
     disk::status::*,
     helper::{
-        Helper, ProcessName, crawler::CrawlerRequirements, node::ImgNode, p2pool::ImgP2pool,
+        Helper, ProcessName,
+        crawler::CrawlerRequirements,
+        node::ImgNode,
+        p2pool::ImgP2pool,
         xrig::xmrig_proxy::ImgProxy,
+        xvb::algorithm::{AlgoConfig, ManualDonationLevel, ManualDonationMetric, XvbModeChoice},
     },
 };
 //---------------------------------------------------------------------------------------------------- [State] Impl
@@ -575,83 +579,16 @@ impl Default for XmrigProxy {
 pub struct Xvb {
     pub simple: bool,
     pub simple_hero_mode: bool,
-    pub mode: XvbMode,
-    pub manual_amount_raw: f64,
-    pub manual_slider_amount: f64,
+    pub mode: XvbModeChoice,
+    pub manual_xvb_donation_metric: ManualDonationMetric,
+    pub manual_p2pool_donation_metric: ManualDonationMetric,
+    pub manual_xvb_slider_amount: f32,
+    pub manual_p2pool_slider_amount: f32,
     pub manual_donation_level: ManualDonationLevel,
-    pub manual_donation_metric: ManualDonationMetric,
-    pub p2pool_buffer: i8,
-    pub use_p2pool_sidechain_hr: bool,
     pub console_height: u32,
-    // user can choose a pool manually
+    pub algo_config: AlgoConfig,
     pub manual_pool_enabled: bool,
     pub manual_pool_eu: bool,
-}
-
-#[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize, Default, EnumCount, EnumIter)]
-pub enum XvbMode {
-    #[default]
-    Auto,
-    Hero,
-    ManualXvb,
-    ManualP2pool,
-    ManualDonationLevel,
-}
-
-impl Display for XvbMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = match self {
-            Self::Auto => "Auto",
-            Self::Hero => "Hero",
-            Self::ManualXvb => "Manual Xvb",
-            Self::ManualP2pool => "Manual P2pool",
-            Self::ManualDonationLevel => "Manual Donation Level",
-        };
-
-        write!(f, "{text}")
-    }
-}
-
-#[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize, Default)]
-pub enum ManualDonationLevel {
-    #[default]
-    Donor,
-    DonorVIP,
-    DonorWhale,
-    DonorMega,
-}
-
-impl Display for ManualDonationLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = match self {
-            Self::Donor => "Donor",
-            Self::DonorVIP => "Donor VIP",
-            Self::DonorWhale => "Donor Whale",
-            Self::DonorMega => "Donor Mega",
-        };
-
-        write!(f, "{text}")
-    }
-}
-
-#[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize, Default)]
-pub enum ManualDonationMetric {
-    #[default]
-    Hash,
-    Kilo,
-    Mega,
-}
-
-impl Display for ManualDonationMetric {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = match self {
-            Self::Hash => "H/s",
-            Self::Kilo => "KH/s",
-            Self::Mega => "MH/s",
-        };
-
-        write!(f, "{text}")
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -749,11 +686,24 @@ impl Default for P2pool {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize, Display)]
+#[derive(Clone, Eq, PartialEq, Debug, Deserialize, Serialize, Display, Default)]
 pub enum P2poolChain {
-    Main,
-    Mini,
+    #[default]
     Nano,
+    Mini,
+    Main,
+}
+
+impl TryFrom<String> for P2poolChain {
+    type Error = ();
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "Nano" | "nano" | "NANO" => Ok(P2poolChain::Nano),
+            "Mini" | "mini" | "MINI" => Ok(P2poolChain::Mini),
+            "Main" | "main" | "MAIN" => Ok(P2poolChain::Main),
+            _ => Err(()),
+        }
+    }
 }
 
 impl Xmrig {
@@ -807,15 +757,15 @@ impl Default for Xvb {
             simple: true,
             simple_hero_mode: Default::default(),
             mode: Default::default(),
-            manual_amount_raw: Default::default(),
-            manual_slider_amount: Default::default(),
             manual_donation_level: Default::default(),
-            manual_donation_metric: Default::default(),
-            p2pool_buffer: 25,
-            use_p2pool_sidechain_hr: false,
+            manual_xvb_donation_metric: Default::default(),
+            manual_p2pool_donation_metric: Default::default(),
+            algo_config: AlgoConfig::default(),
             console_height: APP_DEFAULT_CONSOLE_HEIGHT,
             manual_pool_enabled: false,
             manual_pool_eu: true,
+            manual_xvb_slider_amount: 0.0,
+            manual_p2pool_slider_amount: 0.0,
         }
     }
 }

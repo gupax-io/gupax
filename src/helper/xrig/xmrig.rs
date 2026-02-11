@@ -1,7 +1,7 @@
 use crate::constants::*;
 use crate::disk::state::{P2pool, StartOptionsMode, XmrigProxy};
 use crate::helper::p2pool::ImgP2pool;
-use crate::helper::xrig::update_xmrig_config;
+use crate::helper::xrig::HashrateProvider;
 use crate::helper::{Helper, ProcessName, ProcessSignal, ProcessState};
 use crate::helper::{Pool, PubXvbApi};
 use crate::helper::{Process, check_died, check_user_input, sleep, sleep_end_loop};
@@ -101,6 +101,7 @@ impl Helper {
                     &process_xvb,
                     pub_api_xvb,
                     ProcessName::Xmrig,
+                    p2pool_state.address.clone(),
                 );
             }
             //			println!("{}", line); // For debugging.
@@ -253,6 +254,7 @@ impl Helper {
         let p2pool_img = Arc::clone(&helper.lock().unwrap().img_p2pool);
         let proxy_state = proxy_state.clone();
         let proxy_img = Arc::clone(&helper.lock().unwrap().img_proxy);
+        let xmrig_img = Arc::clone(&helper.lock().unwrap().img_xmrig);
         let pub_api_xvb = Arc::clone(&helper.lock().unwrap().pub_api_xvb);
         thread::spawn(move || {
             Self::spawn_xmrig_watchdog(
@@ -272,6 +274,7 @@ impl Helper {
                 &p2pool_img,
                 &proxy_state,
                 &proxy_img,
+                xmrig_img,
             );
         });
     }
@@ -482,6 +485,7 @@ impl Helper {
         p2pool_img: &Arc<Mutex<ImgP2pool>>,
         proxy_state: &XmrigProxy,
         proxy_img: &Arc<Mutex<ImgProxy>>,
+        xmrig_img: Arc<Mutex<ImgXmrig>>,
     ) {
         // The actual binary we're executing is [sudo], technically
         // the XMRig path is just an argument to sudo, so add it.
@@ -635,6 +639,8 @@ impl Helper {
                 )
             }
         }
+        let hashrate_provider =
+            HashrateProvider::Xmrig(gui_api.clone(), xmrig_img.clone(), client.clone());
         loop {
             // Set timer
             let now = Instant::now();
@@ -723,16 +729,7 @@ impl Helper {
                 let pool = Pool::P2pool(
                     p2pool_state.current_port(p2pool_alive, &p2pool_img.lock().unwrap()),
                 );
-                if let Err(err) = update_xmrig_config(
-                    &client,
-                    &api_uri_config,
-                    token,
-                    &pool,
-                    "",
-                    GUPAX_VERSION_UNDERSCORE,
-                )
-                .await
-                {
+                if let Err(err) = hashrate_provider.update_config(&pool).await {
                     // show to console error about updating xmrig config
                     warn!("XMRig Process | Failed request HTTP API Xmrig");
                     output_console(

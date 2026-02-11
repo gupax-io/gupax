@@ -27,48 +27,13 @@ use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::Deserialize;
 
 use crate::{
-    XVB_ROUND_DONOR_MEGA_MIN_HR, XVB_ROUND_DONOR_MIN_HR, XVB_ROUND_DONOR_VIP_MIN_HR,
-    XVB_ROUND_DONOR_WHALE_MIN_HR, disk::state::XvbMode,
-};
-use crate::{
     XVB_URL,
-    disk::state::ManualDonationLevel,
     helper::{Process, ProcessName, ProcessState, xvb::output_console},
 };
 
 use super::{PubXvbApi, nodes::Pool, rounds::XvbRound};
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
-pub enum RuntimeMode {
-    #[default]
-    Auto,
-    ManualXvb,
-    ManualP2pool,
-    Hero,
-    ManualDonationLevel,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
-pub enum RuntimeDonationLevel {
-    #[default]
-    Donor,
-    DonorVIP,
-    DonorWhale,
-    DonorMega,
-}
-
-impl RuntimeDonationLevel {
-    pub fn get_hashrate(&self) -> f32 {
-        match &self {
-            Self::Donor => XVB_ROUND_DONOR_MIN_HR as f32,
-            Self::DonorVIP => XVB_ROUND_DONOR_VIP_MIN_HR as f32,
-            Self::DonorWhale => XVB_ROUND_DONOR_WHALE_MIN_HR as f32,
-            Self::DonorMega => XVB_ROUND_DONOR_MEGA_MIN_HR as f32,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct XvbPrivStats {
     pub fails: u8,
     pub donor_1hr_avg: f32,
@@ -83,15 +48,11 @@ pub struct XvbPrivStats {
     // it is the time remaining before switching from P2pool to XvB or XvB to P2ool.
     // it is not the time remaining of the algo, even if it could be the same if never mining on XvB.
     pub time_switch_pool: u32,
+    // time donated in seconds for this decision, updated by the algorithm
+    #[serde(skip)]
+    pub time_donated: f32,
     #[serde(skip)]
     pub msg_indicator: String,
-    #[serde(skip)]
-    // so the hero mode can change between two decision of algorithm without restarting XvB.
-    pub runtime_mode: RuntimeMode,
-    #[serde(skip)]
-    pub runtime_manual_amount: f64,
-    #[serde(skip)]
-    pub runtime_manual_donation_level: RuntimeDonationLevel,
 }
 
 impl XvbPrivStats {
@@ -110,7 +71,12 @@ impl XvbPrivStats {
             .await?;
         match resp.status() {
             StatusCode::OK => match resp.json::<Self>().await {
-                Ok(s) => Ok(s),
+                Ok(mut s) => {
+                    // The API sends the number as KH/s
+                    s.donor_1hr_avg *= 1000.0;
+                    s.donor_24hr_avg *= 1000.0;
+                    Ok(s)
+                }
                 Err(err) => {
                     error!(
                         "XvB Watchdog | Data provided from private API is not deserializ-able.Error: {err}"
@@ -127,16 +93,15 @@ impl XvbPrivStats {
     pub async fn update_stats(
         client: &Client,
         address: &str,
-        pub_api: &Arc<Mutex<PubXvbApi>>,
         gui_api: &Arc<Mutex<PubXvbApi>>,
         process: &Arc<Mutex<Process>>,
     ) {
         match XvbPrivStats::request_api(client, address).await {
             Ok(new_data) => {
                 debug!("XvB Watchdog | HTTP API request OK");
-                pub_api.lock().unwrap().stats_priv.fails = new_data.fails;
-                pub_api.lock().unwrap().stats_priv.donor_1hr_avg = new_data.donor_1hr_avg;
-                pub_api.lock().unwrap().stats_priv.donor_24hr_avg = new_data.donor_24hr_avg;
+                gui_api.lock().unwrap().stats_priv.fails = new_data.fails;
+                gui_api.lock().unwrap().stats_priv.donor_1hr_avg = new_data.donor_1hr_avg;
+                gui_api.lock().unwrap().stats_priv.donor_24hr_avg = new_data.donor_24hr_avg;
                 let previously_failed = process.lock().unwrap().state == ProcessState::Failed;
                 if previously_failed {
                     info!("XvB Watchdog | Public stats are working again");
@@ -168,29 +133,6 @@ impl XvbPrivStats {
                 );
                 process.lock().unwrap().state = ProcessState::Failed;
             }
-        }
-    }
-}
-
-impl From<XvbMode> for RuntimeMode {
-    fn from(mode: XvbMode) -> Self {
-        match mode {
-            XvbMode::Auto => Self::Auto,
-            XvbMode::ManualXvb => Self::ManualXvb,
-            XvbMode::ManualP2pool => Self::ManualP2pool,
-            XvbMode::Hero => Self::Hero,
-            XvbMode::ManualDonationLevel => Self::ManualDonationLevel,
-        }
-    }
-}
-
-impl From<ManualDonationLevel> for RuntimeDonationLevel {
-    fn from(level: ManualDonationLevel) -> Self {
-        match level {
-            ManualDonationLevel::Donor => RuntimeDonationLevel::Donor,
-            ManualDonationLevel::DonorVIP => RuntimeDonationLevel::DonorVIP,
-            ManualDonationLevel::DonorWhale => RuntimeDonationLevel::DonorWhale,
-            ManualDonationLevel::DonorMega => RuntimeDonationLevel::DonorMega,
         }
     }
 }

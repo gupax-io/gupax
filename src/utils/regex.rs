@@ -196,10 +196,10 @@ pub fn detect_pool_xmrig(s: &str, proxy_port: u16, p2pool_port: u16) -> Option<P
                 }
             }
             "eu.xmrvsbeast.com:4247" => {
-                return Some(Pool::XvBEurope);
+                return Some(Pool::XvBEurope("NONE".to_string()));
             }
             "na.xmrvsbeast.com:4247" => {
-                return Some(Pool::XvBNorthAmerica);
+                return Some(Pool::XvBNorthAmerica("NONE".to_string()));
             }
             x => {
                 let (ip, port) = x.split_once(":").unwrap_or_default();

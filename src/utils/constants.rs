@@ -559,7 +559,7 @@ pub const XVB_SIDE_MARGIN_1H: f32 = 0.2;
 // time is in ms
 pub const XVB_TIME_ALGO: u64 = 60_000;
 // minimum time to send to XvB if any
-pub const XVB_MIN_TIME_SEND: u64 = 50;
+pub const _XVB_MIN_TIME_SEND: u64 = 50;
 pub const XVB_HERO_SELECT: &str = "Donate as much as possible while keeping a share on p2pool, increases the odds of your round winning\nWhen modified, the algorithm will use the new choice at the next decision.";
 pub const XVB_FAILURE_FIELD: &str = "Failures";
 pub const XVB_DONATED_1H_FIELD: &str = "Donated last hour";
@@ -567,11 +567,6 @@ pub const XVB_DONATED_24H_FIELD: &str = "Donated last 24 hours";
 pub const XVB_ROUND_TYPE_FIELD: &str = "Round";
 pub const XVB_WINNER_FIELD: &str = "Win";
 pub const XVB_MINING_ON_FIELD: &str = "Currently Mining on";
-
-pub const XVB_ROUND_DONOR_MIN_HR: u32 = 1000;
-pub const XVB_ROUND_DONOR_VIP_MIN_HR: u32 = 10000;
-pub const XVB_ROUND_DONOR_WHALE_MIN_HR: u32 = 100000;
-pub const XVB_ROUND_DONOR_MEGA_MIN_HR: u32 = 1000000;
 
 pub const SOCKET_MONERO_LOCAL_OUTSIDE: SocketAddr =
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 18080));

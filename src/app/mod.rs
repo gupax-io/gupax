@@ -46,7 +46,7 @@ use crate::helper::xrig::xmrig::PubXmrigApi;
 use crate::helper::xrig::xmrig_proxy::ImgProxy;
 use crate::helper::xrig::xmrig_proxy::PubXmrigProxyApi;
 use crate::helper::xvb::PubXvbApi;
-use crate::helper::xvb::priv_stats::RuntimeMode;
+use crate::helper::xvb::algorithm::XvbMode;
 use crate::inits::init_text_styles;
 use crate::miscs::cmp_f64;
 use crate::miscs::get_exe;
@@ -712,24 +712,14 @@ impl App {
         // Set saved prefer local node to runtime
         app.p2pool_api.lock().unwrap().prefer_local_node = app.state.p2pool.prefer_local_node;
 
-        // Set saved choice of use of sidechain HR
-        app.xvb_api.lock().unwrap().use_p2pool_sidechain_hr = app.state.xvb.use_p2pool_sidechain_hr;
-
         // Set saved choice for notifications
         app.notifications_api.lock().unwrap().notifications = app.state.gupax.notifications.clone();
 
-        // Set saved Hero mode to runtime.
+        // Set saved XvB settings to XvB API
+        // Need to save to pub as we read it as instant data
         debug!("Setting runtime_mode & runtime_manual_amount");
-        // apply hero if simple mode saved with checkbox true, will let default to auto otherwise
-        if app.state.xvb.simple {
-            if app.state.xvb.simple_hero_mode {
-                app.xvb_api.lock().unwrap().stats_priv.runtime_mode = RuntimeMode::Hero
-            }
-        } else {
-            app.xvb_api.lock().unwrap().stats_priv.runtime_mode = app.state.xvb.mode.clone().into();
-        }
-        app.xvb_api.lock().unwrap().stats_priv.runtime_manual_amount =
-            app.state.xvb.manual_amount_raw;
+        app.xvb_api.lock().unwrap().algo_config = app.state.xvb.algo_config.clone();
+        app.xvb_api.lock().unwrap().runtime_mode = XvbMode::from(&app.state.xvb);
 
         drop(og); // Unlock [og]
 
