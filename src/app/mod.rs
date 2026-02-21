@@ -739,9 +739,13 @@ impl App {
         #[cfg(target_os = "windows")]
         if is_elevated::is_elevated() {
             app.admin = true;
-        } else {
-            error!("Windows | Admin user not detected!");
-            app.error_state.set("Gupax was not launched as Administrator!\nBe warned, XMRig might have less hashrate!".to_string(), ErrorFerris::Admin, ErrorButtons::WindowsAdmin);
+            error!("Windows | Admin user detected!");
+            app.error_state.set(
+                "Gupax was launched as Administrator!\nThis is not useful since Gupax v2.0.0"
+                    .to_string(),
+                ErrorFerris::Admin,
+                ErrorButtons::WindowsAdmin,
+            );
         }
         #[cfg(target_family = "unix")]
         if sudo_check::check() != sudo_check::RunningAs::User {

@@ -61,7 +61,7 @@ impl crate::app::App {
                         ui.group(|ui| {
                             self.version(ui, bar_height);
                             ui.add(Separator::default().grow(extra_separator));
-                            self.os_show(ui);
+                            ui.label(self.os);
                             ui.add(Separator::default().grow(extra_separator));
                             self.theme_show(ui, ctx);
                             // width of each status
@@ -129,18 +129,6 @@ impl crate::app::App {
             _ => ui.add_sized([0.0, height], Label::new(&self.name_version)),
         };
     }
-    fn os_show(&self, ui: &mut Ui) {
-        #[cfg(target_os = "windows")]
-        if self.admin {
-            ui.label(self.os);
-        } else {
-            ui.add(Label::new(RichText::new(self.os).color(RED)))
-                .on_hover_text(WINDOWS_NOT_ADMIN);
-        }
-        #[cfg(target_family = "unix")]
-        ui.label(self.os);
-    }
-
     fn theme_show(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let icon = match self.state.gupax.theme {
             GupaxTheme::Dark => "🌙",

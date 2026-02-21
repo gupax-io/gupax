@@ -17,6 +17,9 @@ use readable::up::Uptime;
 use reqwest::header::AUTHORIZATION;
 use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::{Deserialize, Serialize};
+use std::env::temp_dir;
+use std::fs::{File, create_dir_all};
+use std::io::BufReader;
 use std::path::Path;
 use std::{
     fmt::Write,
@@ -37,7 +40,7 @@ impl Helper {
     pub async fn read_pty_xmrig(
         output_parse: Arc<Mutex<String>>,
         output_pub: Arc<Mutex<String>>,
-        reader: Box<dyn std::io::Read + Send>,
+        reader: BufReader<File>,
         process_xvb: Arc<Mutex<Process>>,
         process_xp: Arc<Mutex<Process>>,
         process_p2pool: Arc<Mutex<Process>>,
@@ -49,7 +52,7 @@ impl Helper {
         process: Arc<Mutex<Process>>,
     ) {
         use std::io::BufRead;
-        let mut stdout = std::io::BufReader::new(reader).lines();
+        let mut stdout = reader.lines();
 
         // Run a ANSI escape sequence filter for the first few lines.
         let mut i = 0;
@@ -384,30 +387,81 @@ impl Helper {
 
     // We spawn [pkexec] on Unix, with XMRig being the argument.
     #[cfg(target_os = "linux")]
-    fn create_xmrig_cmd_unix(args: Vec<String>, path: PathBuf) -> portable_pty::CommandBuilder {
+    fn create_xmrig_cmd_unix(
+        mut args: Vec<String>,
+        path_binary: PathBuf,
+        input_path: PathBuf,
+        output_path: PathBuf,
+    ) -> portable_pty::CommandBuilder {
         let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new("pkexec");
-        cmd.arg(path.clone());
+        args.push("-l".into());
+        args.push(output_path.display().to_string());
+        args.push("<>".into());
+        args.push(input_path.display().to_string());
+        cmd.arg(path_binary.clone());
         cmd.args(args);
-        cmd.cwd(path.as_path().parent().unwrap());
+        cmd.cwd(path_binary.as_path().parent().unwrap());
         cmd
     }
 
-    // We actually spawn [sudo] on macos, with XMRig being the argument.
     #[cfg(target_os = "macos")]
-    fn create_xmrig_cmd_macos(args: Vec<String>, path: PathBuf) -> portable_pty::CommandBuilder {
-        let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new("sudo");
-        cmd.arg(path.clone());
-        cmd.args(args);
+    fn create_xmrig_cmd_macos(
+        mut args: Vec<String>,
+        path: PathBuf,
+        input_path: PathBuf,
+        output_path: PathBuf,
+    ) -> portable_pty::CommandBuilder {
+        args.push("-l".to_string());
+        args.push(output_path.display().to_string());
+        args.push("<>".into());
+        args.push(input_path.display().to_string());
+
+        let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new("osascript");
+        cmd.arg("-e");
+        let arg = format!(
+            "do shell script \"{} {} \" with administrator privileges",
+            path.display(),
+            args.join(" "),
+        );
+        cmd.arg(arg);
         cmd.cwd(path.as_path().parent().unwrap());
+        dbg!(cmd.get_argv());
         cmd
     }
-
     // Gupax should be admin on Windows, so just spawn XMRig normally.
     #[cfg(target_os = "windows")]
-    fn create_xmrig_cmd_windows(args: Vec<String>, path: PathBuf) -> portable_pty::CommandBuilder {
-        let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new(path.clone());
-        cmd.args(args);
-        cmd.cwd(path.as_path().parent().unwrap());
+    fn create_xmrig_cmd_windows(
+        mut args: Vec<String>,
+        path_binary: PathBuf,
+        input_path: PathBuf,
+        output_path: PathBuf,
+    ) -> portable_pty::CommandBuilder {
+        args.push("-l".to_string());
+        args.push(output_path.display().to_string());
+
+        let args_str = args
+            .iter()
+            .map(|arg| format!("'{}'", arg))
+            .collect::<Vec<String>>()
+            .join(" ");
+
+        let get_content = format!(
+            "Get-Content '{}' -Wait | '{}' {}",
+            input_path.display(),
+            path_binary.display(),
+            args_str
+        );
+
+        let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new("powershell");
+        cmd.args([
+            "-Command",
+            &format!(
+                "Start-Process powershell -Verb RunAs -ArgumentList '-Command', '{}'",
+                get_content.replace("'", "''")
+            ),
+        ]);
+
+        cmd.cwd(path_binary.as_path().parent().unwrap());
         cmd
     }
 
@@ -447,8 +501,23 @@ impl Helper {
             })
             .unwrap();
         // 4. Spawn PTY read thread
+        //
+        //
+
+        let temp_dir = temp_dir();
+        let mut input_file = temp_dir.to_path_buf();
+        input_file.push("xmrig_input");
+        let mut output_file = temp_dir.to_path_buf();
+        output_file.push("xmrig_output");
+
+        create_dir_all(temp_dir).unwrap();
+
+        let mut input: Box<dyn std::io::Write + Send> =
+            Box::new(File::create(&input_file).unwrap());
+        let output = File::create(&output_file).unwrap();
+
+        let reader = std::io::BufReader::new(output);
         debug!("XMRig | Spawning PTY read thread...");
-        let reader = pair.master.try_clone_reader().unwrap(); // Get STDOUT/STDERR before moving the PTY
         let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
         let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
         spawn(
@@ -459,17 +528,15 @@ impl Helper {
         // 1b. Create command
         debug!("XMRig | Creating command...");
         #[cfg(target_os = "windows")]
-        let cmd = Self::create_xmrig_cmd_windows(args, path);
+        let cmd = Self::create_xmrig_cmd_windows(args, path, input_file, output_file);
         #[cfg(target_os = "linux")]
-        let cmd = Self::create_xmrig_cmd_unix(args, path);
+        let cmd = Self::create_xmrig_cmd_unix(args, path, input_file, output_file);
         #[cfg(target_os = "macos")]
-        let cmd = Self::create_xmrig_cmd_macos(args, path);
+        let cmd = Self::create_xmrig_cmd_macos(args, path, input_file, output_file);
         // 1c. Create child
         debug!("XMRig | Creating child...");
         let child_pty = Arc::new(Mutex::new(pair.slave.spawn_command(cmd).unwrap()));
         drop(pair.slave);
-
-        let mut stdin = pair.master.take_writer().unwrap();
 
         debug!("XMRig | Clearing GUI output...");
         gui_api.lock().unwrap().output.clear();
@@ -566,7 +633,7 @@ impl Helper {
             // Stop on [Stop/Restart] SIGNAL
             if Self::xmrig_signal_end(
                 &mut process.lock().unwrap(),
-                &mut stdin,
+                &mut input,
                 &child_pty,
                 &start,
                 &mut gui_api.lock().unwrap().output,
@@ -574,7 +641,7 @@ impl Helper {
                 break;
             }
             // Check vector of user input
-            check_user_input(&process, &mut stdin);
+            check_user_input(&process, &mut input);
             // Check if logs need resetting
             debug!("XMRig Watchdog | Attempting GUI log reset check");
             {

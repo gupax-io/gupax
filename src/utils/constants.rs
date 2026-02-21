@@ -198,8 +198,6 @@ pub const XMRIG_ADMIN_REASON: &str = r#"The large hashrate difference between XM
 pub const OS: &str = " Windows";
 #[cfg(target_os = "windows")]
 pub const OS_NAME: &str = "Windows";
-#[cfg(target_os = "windows")]
-pub const WINDOWS_NOT_ADMIN: &str = "XMRig will most likely mine slower than normal without Administrator permissions. Please consider restarting Gupax as an Administrator.";
 
 #[cfg(target_os = "macos")]
 pub const OS: &str = " macOS";
