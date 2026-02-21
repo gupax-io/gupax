@@ -739,7 +739,7 @@ impl App {
         #[cfg(target_os = "windows")]
         if is_elevated::is_elevated() {
             app.admin = true;
-            error!("Windows | Admin user detected!");
+            warn!("Windows | Admin user detected!");
             app.error_state.set(
                 "Gupax was launched as Administrator!\nThis is not useful since Gupax v2.0.0"
                     .to_string(),
