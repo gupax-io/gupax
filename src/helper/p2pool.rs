@@ -53,8 +53,12 @@ use crate::{
 use enclose::enc;
 use log::*;
 use serde::{Deserialize, Serialize};
+use std::io::PipeReader;
+use std::io::Write as IoWrite;
 use std::mem;
 use std::path::Path;
+use std::process::Command;
+use std::process::Stdio;
 use std::{
     fmt::Write,
     path::PathBuf,
@@ -69,7 +73,7 @@ impl Helper {
     fn read_pty_p2pool(
         output_parse: Arc<Mutex<String>>,
         output_pub: Arc<Mutex<String>>,
-        reader: Box<dyn std::io::Read + Send>,
+        reader: PipeReader,
         gupax_p2pool_api: Arc<Mutex<GupaxP2poolApi>>,
         gui_api: Arc<Mutex<PubP2poolApi>>,
     ) {
@@ -633,26 +637,17 @@ impl Helper {
         node: RemoteNode,
     ) {
         // 1a. Create PTY
-        debug!("P2Pool | Creating PTY...");
-        let pty = portable_pty::native_pty_system();
-        let pair = pty
-            .openpty(portable_pty::PtySize {
-                rows: 100,
-                cols: 1000,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
-        // 1b. Create command
-        debug!("P2Pool | Creating command...");
-        let mut cmd = portable_pty::CommandBuilder::new(path.as_path());
+        let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
+        let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
+        let mut cmd = Command::new(&path);
+        cmd.stdin(Stdio::from(stdin_reader));
+        cmd.stdout(Stdio::from(stdout_writer));
         cmd.args(args);
         cmd.env("NO_COLOR", "true");
-        cmd.cwd(path.as_path().parent().unwrap());
+        cmd.current_dir(path.as_path().parent().unwrap());
         // 1c. Create child
         debug!("P2Pool | Creating child...");
-        let child_pty = Arc::new(Mutex::new(pair.slave.spawn_command(cmd).unwrap()));
-        drop(pair.slave);
+        let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
 
         // 2. Set process state
         debug!("P2Pool | Setting process state...");
@@ -660,8 +655,7 @@ impl Helper {
         lock.state = ProcessState::Syncing;
         lock.signal = ProcessSignal::None;
         lock.start = Instant::now();
-        let reader = pair.master.try_clone_reader().unwrap(); // Get STDOUT/STDERR before moving the PTY
-        let mut stdin = pair.master.take_writer().unwrap();
+        let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
         drop(lock);
 
         // 3. Spawn PTY read thread
@@ -674,7 +668,7 @@ impl Helper {
             Self::read_pty_p2pool(
                 output_parse,
                 output_pub,
-                reader,
+                stdout_reader,
                 gupax_p2pool_api,
                 p2pool_api_c,
             );

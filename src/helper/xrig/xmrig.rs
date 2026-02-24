@@ -9,20 +9,22 @@ use crate::human::HumanTime;
 use crate::miscs::{client, output_console};
 use crate::regex::XMRIG_REGEX;
 use crate::utils::human::HumanNumber;
+use cfg_if::cfg_if;
 use enclose::{enc, enclose};
 use log::*;
-use portable_pty::Child;
 use readable::num::Unsigned;
 use readable::up::Uptime;
 use reqwest::header::AUTHORIZATION;
 use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::{Deserialize, Serialize};
-use std::env::temp_dir;
-use std::fs::{File, create_dir_all};
-use std::io::BufReader;
+use std::fmt::Write;
+use std::io::{BufReader, Write as IoWrite};
+#[cfg(target_family = "unix")]
+use std::io::{PipeReader, PipeWriter};
 use std::path::Path;
+#[cfg(target_family = "unix")]
+use std::process::Stdio;
 use std::{
-    fmt::Write,
     path::PathBuf,
     sync::{Arc, Mutex},
     thread,
@@ -32,6 +34,7 @@ use tokio::spawn;
 
 use super::Hashrate;
 use super::xmrig_proxy::ImgProxy;
+use std::process::{Child, Command};
 
 impl Helper {
     #[cold]
@@ -40,7 +43,7 @@ impl Helper {
     pub async fn read_pty_xmrig(
         output_parse: Arc<Mutex<String>>,
         output_pub: Arc<Mutex<String>>,
-        reader: BufReader<File>,
+        reader: Box<dyn std::io::Read + Send>,
         process_xvb: Arc<Mutex<Process>>,
         process_xp: Arc<Mutex<Process>>,
         process_p2pool: Arc<Mutex<Process>>,
@@ -52,7 +55,7 @@ impl Helper {
         process: Arc<Mutex<Process>>,
     ) {
         use std::io::BufRead;
-        let mut stdout = reader.lines();
+        let mut stdout = BufReader::new(reader).lines();
 
         // Run a ANSI escape sequence filter for the first few lines.
         let mut i = 0;
@@ -388,35 +391,28 @@ impl Helper {
     // We spawn [pkexec] on Unix, with XMRig being the argument.
     #[cfg(target_os = "linux")]
     fn create_xmrig_cmd_unix(
-        mut args: Vec<String>,
+        args: Vec<String>,
         path_binary: PathBuf,
-        input_path: PathBuf,
-        output_path: PathBuf,
-    ) -> portable_pty::CommandBuilder {
-        let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new("pkexec");
-        args.push("-l".into());
-        args.push(output_path.display().to_string());
-        args.push("<>".into());
-        args.push(input_path.display().to_string());
+        stdin_reader: PipeReader,
+        stdout_writer: PipeWriter,
+    ) -> Command {
+        let mut cmd = Command::new("pkexec");
         cmd.arg(path_binary.clone());
         cmd.args(args);
-        cmd.cwd(path_binary.as_path().parent().unwrap());
+        cmd.current_dir(path_binary.as_path().parent().unwrap());
+        cmd.stdin(Stdio::from(stdin_reader));
+        cmd.stdout(Stdio::from(stdout_writer));
         cmd
     }
 
     #[cfg(target_os = "macos")]
     fn create_xmrig_cmd_macos(
-        mut args: Vec<String>,
+        args: Vec<String>,
         path: PathBuf,
-        input_path: PathBuf,
-        output_path: PathBuf,
-    ) -> portable_pty::CommandBuilder {
-        args.push("-l".to_string());
-        args.push(output_path.display().to_string());
-        args.push("<>".into());
-        args.push(input_path.display().to_string());
-
-        let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new("osascript");
+        stdin_reader: PipeReader,
+        stdout_writer: PipeWriter,
+    ) -> Command {
+        let mut cmd = Command::new("osascript");
         cmd.arg("-e");
         let arg = format!(
             "do shell script \"{} {} \" with administrator privileges",
@@ -424,8 +420,9 @@ impl Helper {
             args.join(" "),
         );
         cmd.arg(arg);
-        cmd.cwd(path.as_path().parent().unwrap());
-        dbg!(cmd.get_argv());
+        cmd.current_dir(path.as_path().parent().unwrap());
+        cmd.stdin(Stdio::from(stdin_reader));
+        cmd.stdout(Stdio::from(stdout_writer));
         cmd
     }
     // Gupax should be admin on Windows, so just spawn XMRig normally.
@@ -433,9 +430,9 @@ impl Helper {
     fn create_xmrig_cmd_windows(
         mut args: Vec<String>,
         path_binary: PathBuf,
-        input_path: PathBuf,
-        output_path: PathBuf,
-    ) -> portable_pty::CommandBuilder {
+        input_path: &Path,
+        output_path: &Path,
+    ) -> Command {
         args.push("-l".to_string());
         args.push(output_path.display().to_string());
 
@@ -452,7 +449,7 @@ impl Helper {
             args_str
         );
 
-        let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new("powershell");
+        let mut cmd = Command::new("powershell");
         cmd.args([
             "-Command",
             &format!(
@@ -461,7 +458,7 @@ impl Helper {
             ),
         ]);
 
-        cmd.cwd(path_binary.as_path().parent().unwrap());
+        cmd.current_dir(path_binary.as_path().parent().unwrap());
         cmd
     }
 
@@ -489,58 +486,52 @@ impl Helper {
         proxy_state: &XmrigProxy,
         proxy_img: &Arc<Mutex<ImgProxy>>,
     ) {
-        // 1a. Create PTY
-        debug!("XMRig | Creating PTY...");
-        let pty = portable_pty::native_pty_system();
-        let pair = pty
-            .openpty(portable_pty::PtySize {
-                rows: 100,
-                cols: 1000,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
-        // 4. Spawn PTY read thread
-        //
-        //
-
-        let temp_dir = temp_dir();
+        cfg_if! {
+            if #[cfg(windows)] {
+        let temp_dir = std::env::temp_dir();
         let mut input_file = temp_dir.to_path_buf();
         input_file.push("xmrig_input");
         let mut output_file = temp_dir.to_path_buf();
         output_file.push("xmrig_output");
 
-        create_dir_all(temp_dir).unwrap();
-
-        let mut input: Box<dyn std::io::Write + Send> =
-            Box::new(File::create(&input_file).unwrap());
-        let output = File::create(&output_file).unwrap();
-
-        let reader = std::io::BufReader::new(output);
-        debug!("XMRig | Spawning PTY read thread...");
-        let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
-        let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
-        spawn(
-            enclose!((pub_api_xvb, process_xp, p2pool_state, p2pool_img, process_p2pool, proxy_img, proxy_state, process) async move {
-                Self::read_pty_xmrig(output_parse, output_pub, reader, process_xvb, process_xp, process_p2pool, &pub_api_xvb, &p2pool_state, &p2pool_img, &proxy_img, &proxy_state, process).await;
-            }),
+        std::fs::create_dir_all(temp_dir).unwrap();
+        std::fs::File::create(&input_file).unwrap();
+        let mut input: Box<dyn std::io::Write + Send> = Box::new(
+            std::fs::File::options()
+                .read(true)
+                .write(true)
+                .open(&input_file)
+                .unwrap(),
         );
-        // 1b. Create command
-        debug!("XMRig | Creating command...");
-        #[cfg(target_os = "windows")]
-        let cmd = Self::create_xmrig_cmd_windows(args, path, input_file, output_file);
+        let mut cmd = Self::create_xmrig_cmd_windows(args, path, &input_file, &output_file);
+        let stdout: Box<dyn std::io::Read + Send> = Box::new(std::fs::File::open(&output_file).unwrap());
+
+            } else {
+        let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
+        let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
+        let mut input: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
         #[cfg(target_os = "linux")]
-        let cmd = Self::create_xmrig_cmd_unix(args, path, input_file, output_file);
+        let mut cmd = Self::create_xmrig_cmd_unix(args, path, stdin_reader, stdout_writer);
         #[cfg(target_os = "macos")]
-        let cmd = Self::create_xmrig_cmd_macos(args, path, input_file, output_file);
-        // 1c. Create child
+        let mut cmd = Self::create_xmrig_cmd_macos(args, path, stdin_reader, stdout_writer);
+        let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_reader);
+
+            }
+        }
+
         debug!("XMRig | Creating child...");
-        let child_pty = Arc::new(Mutex::new(pair.slave.spawn_command(cmd).unwrap()));
-        drop(pair.slave);
+        let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
 
         debug!("XMRig | Clearing GUI output...");
         gui_api.lock().unwrap().output.clear();
 
+        let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
+        let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
+        spawn(
+            enclose!((pub_api_xvb, process_xp, p2pool_state, p2pool_img, process_p2pool, proxy_img, proxy_state, process) async move {
+                Self::read_pty_xmrig(output_parse, output_pub, stdout, process_xvb, process_xp, process_p2pool, &pub_api_xvb, &p2pool_state, &p2pool_img, &proxy_img, &proxy_state, process).await;
+            }),
+        );
         // 3. Set process state
         debug!("XMRig | Setting process state...");
         let mut lock = process.lock().unwrap();
@@ -735,20 +726,16 @@ impl Helper {
     fn xmrig_signal_end(
         process: &mut Process,
         stdin: &mut Box<dyn std::io::Write + Send>,
-        child_pty: &Arc<Mutex<Box<dyn Child + Sync + Send>>>,
+        child_pty: &Arc<Mutex<Child>>,
         start: &Instant,
         gui_api_output_raw: &mut String,
     ) -> bool {
         let signal = &process.signal;
         if *signal == ProcessSignal::Stop || *signal == ProcessSignal::Restart {
             debug!("XMRig Watchdog | Stop/Restart SIGNAL caught");
-            if cfg!(target_family = "unix") {
-                // send a Ctrl+C in the input, overriding the need to re-authenticate
+            // send a Ctrl+C in the input, overriding the need to re-authenticate
 
-                if let Err(e) = stdin.write_all(&[0x03]) {
-                    error!("XMRig Watchdog | Kill error: {e}");
-                }
-            } else if let Err(e) = child_pty.lock().unwrap().kill() {
+            if let Err(e) = stdin.write_all(&[0x03]) {
                 error!("XMRig Watchdog | Kill error: {e}");
             }
             let exit_status = match child_pty.lock().unwrap().wait() {
