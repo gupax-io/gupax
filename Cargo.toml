@@ -108,6 +108,7 @@ sudo = "0.6.0"
 eframe = {version="0.33", features=["x11", "wayland"]}
 # macOS
 [target.'cfg(target_os = "macos")'.dependencies]
+nix = { version = "0.31", features = ["fs"] }
 [dev-dependencies]
 egui = {version="0.33", features=["callstack"]}
 # egui = {git="https://github.com/emilk/egui", features=["callstack"]}

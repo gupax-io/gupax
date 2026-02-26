@@ -18,12 +18,10 @@ use reqwest::header::AUTHORIZATION;
 use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
-use std::io::{BufReader, Write as IoWrite};
-#[cfg(target_family = "unix")]
+use std::io::{BufRead, BufReader, Write as IoWrite};
+#[cfg(target_os = "linux")]
 use std::io::{PipeReader, PipeWriter};
 use std::path::Path;
-#[cfg(target_family = "unix")]
-use std::process::Stdio;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -43,7 +41,7 @@ impl Helper {
     pub async fn read_pty_xmrig(
         output_parse: Arc<Mutex<String>>,
         output_pub: Arc<Mutex<String>>,
-        reader: Box<dyn std::io::Read + Send>,
+        mut reader: Box<dyn std::io::Read + Send>,
         process_xvb: Arc<Mutex<Process>>,
         process_xp: Arc<Mutex<Process>>,
         process_p2pool: Arc<Mutex<Process>>,
@@ -54,65 +52,67 @@ impl Helper {
         proxy_state: &XmrigProxy,
         process: Arc<Mutex<Process>>,
     ) {
-        use std::io::BufRead;
-        let mut stdout = BufReader::new(reader).lines();
-
-        // Run a ANSI escape sequence filter for the first few lines.
         let mut i = 0;
-        while let Some(Ok(line)) = stdout.next() {
-            let line = strip_ansi_escapes::strip_str(line);
-            // skip until the first line of xmrig is appearing, hiding automatic input of gupax
-            if i == 0 && !line.contains("ABOUT") {
-                continue;
+        loop {
+            let mut lines = BufReader::new(&mut reader).lines();
+            // Run a ANSI escape sequence filter for the first few lines.
+            while let Some(Ok(line)) = lines.next() {
+                let line = strip_ansi_escapes::strip_str(line);
+                // skip until the first line of xmrig is appearing, hiding automatic input of gupax
+                if i == 0 && !line.contains("ABOUT") {
+                    continue;
+                }
+                if i == 0 && line.contains("ABOUT") {
+                    info!("Xmrig is started");
+                    process.lock().unwrap().state = ProcessState::NotMining;
+                }
+                if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
+                    error!("XMRig PTY Parse | Output error: {e}");
+                }
+                if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
+                    error!("XMRig PTY Pub | Output error: {e}");
+                }
+                if i > 7 {
+                    break;
+                } else {
+                    i += 1;
+                }
             }
-            if i == 0 && line.contains("ABOUT") {
-                info!("Xmrig is started");
-                process.lock().unwrap().state = ProcessState::NotMining;
-            }
-            if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
-                error!("XMRig PTY Parse | Output error: {e}");
-            }
-            if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
-                error!("XMRig PTY Pub | Output error: {e}");
-            }
-            if i > 7 {
-                break;
-            } else {
-                i += 1;
-            }
-        }
 
-        while let Some(Ok(line)) = stdout.next() {
-            // need to verify if pool still working
-            // for that need to catch "connect error"
-            // only check if xvb process is used and xmrig-proxy is not.
-            if process_xvb.lock().unwrap().is_alive() && !process_xp.lock().unwrap().is_alive() {
-                let proxy_port = proxy_state
-                    .current_ports(
-                        process_xp.lock().unwrap().is_alive(),
-                        &proxy_img.lock().unwrap(),
-                    )
-                    .0;
-                let p2pool_port = p2pool_state.current_port(
-                    process_p2pool.lock().unwrap().is_alive(),
-                    &p2pool_img.lock().unwrap(),
-                );
-                Pool::update_current_pool(
-                    &line,
-                    proxy_port,
-                    p2pool_port,
-                    &process_xvb,
-                    pub_api_xvb,
-                    ProcessName::Xmrig,
-                );
+            while let Some(Ok(line)) = lines.next() {
+                // need to verify if pool still working
+                // for that need to catch "connect error"
+                // only check if xvb process is used and xmrig-proxy is not.
+                if process_xvb.lock().unwrap().is_alive() && !process_xp.lock().unwrap().is_alive()
+                {
+                    let proxy_port = proxy_state
+                        .current_ports(
+                            process_xp.lock().unwrap().is_alive(),
+                            &proxy_img.lock().unwrap(),
+                        )
+                        .0;
+                    let p2pool_port = p2pool_state.current_port(
+                        process_p2pool.lock().unwrap().is_alive(),
+                        &p2pool_img.lock().unwrap(),
+                    );
+                    Pool::update_current_pool(
+                        &line,
+                        proxy_port,
+                        p2pool_port,
+                        &process_xvb,
+                        pub_api_xvb,
+                        ProcessName::Xmrig,
+                    );
+                }
+                //			println!("{}", line); // For debugging.
+                if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
+                    error!("XMRig PTY Parse | Output error: {e}");
+                }
+                if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
+                    error!("XMRig PTY Pub | Output error: {e}");
+                }
             }
-            //			println!("{}", line); // For debugging.
-            if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
-                error!("XMRig PTY Parse | Output error: {e}");
-            }
-            if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
-                error!("XMRig PTY Pub | Output error: {e}");
-            }
+            sleep!(100);
         }
     }
     //---------------------------------------------------------------------------------------------------- XMRig specific, most functions are very similar to P2Pool's
@@ -396,6 +396,8 @@ impl Helper {
         stdin_reader: PipeReader,
         stdout_writer: PipeWriter,
     ) -> Command {
+        use std::process::Stdio;
+
         let mut cmd = Command::new("pkexec");
         cmd.arg(path_binary.clone());
         cmd.args(args);
@@ -407,22 +409,23 @@ impl Helper {
 
     #[cfg(target_os = "macos")]
     fn create_xmrig_cmd_macos(
-        args: Vec<String>,
+        mut args: Vec<String>,
         path: PathBuf,
-        stdin_reader: PipeReader,
-        stdout_writer: PipeWriter,
+        input_path: &Path,
+        output_path: &Path,
     ) -> Command {
+        args.push("-l".to_string());
+        args.push(output_path.display().to_string());
         let mut cmd = Command::new("osascript");
         cmd.arg("-e");
         let arg = format!(
-            "do shell script \"{} {} \" with administrator privileges",
+            "do shell script \"{} {} <> {}\" with administrator privileges",
             path.display(),
             args.join(" "),
+            input_path.display()
         );
         cmd.arg(arg);
         cmd.current_dir(path.as_path().parent().unwrap());
-        cmd.stdin(Stdio::from(stdin_reader));
-        cmd.stdout(Stdio::from(stdout_writer));
         cmd
     }
     // Gupax should be admin on Windows, so just spawn XMRig normally.
@@ -487,40 +490,65 @@ impl Helper {
         proxy_img: &Arc<Mutex<ImgProxy>>,
     ) {
         cfg_if! {
-            if #[cfg(windows)] {
-        let temp_dir = std::env::temp_dir();
-        let mut input_file = temp_dir.to_path_buf();
-        input_file.push("xmrig_input");
-        let mut output_file = temp_dir.to_path_buf();
-        output_file.push("xmrig_output");
+                    if #[cfg(windows)] {
+                let temp_dir = std::env::temp_dir();
+                let mut input_path = temp_dir.to_path_buf();
+                input_path.push("xmrig_input");
+                let mut output_path = temp_dir.to_path_buf();
+                output_path.push("xmrig_output");
 
-        std::fs::create_dir_all(temp_dir).unwrap();
-        std::fs::File::create(&input_file).unwrap();
-        let mut input: Box<dyn std::io::Write + Send> = Box::new(
-            std::fs::File::options()
-                .read(true)
-                .write(true)
-                .open(&input_file)
-                .unwrap(),
-        );
-        let mut cmd = Self::create_xmrig_cmd_windows(args, path, &input_file, &output_file);
-        let stdout: Box<dyn std::io::Read + Send> = Box::new(std::fs::File::open(&output_file).unwrap());
 
-            } else {
-        let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
-        let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
-        let mut input: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
-        #[cfg(target_os = "linux")]
-        let mut cmd = Self::create_xmrig_cmd_unix(args, path, stdin_reader, stdout_writer);
-        #[cfg(target_os = "macos")]
-        let mut cmd = Self::create_xmrig_cmd_macos(args, path, stdin_reader, stdout_writer);
-        let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_reader);
+                let _ = std::fs::remove_file(&input_path);
+                let _ = std::fs::remove_file(&output_path);
 
-            }
-        }
-
-        debug!("XMRig | Creating child...");
+                std::fs::create_dir_all(temp_dir).unwrap();
+                std::fs::File::create(&input_path).unwrap();
+                let mut cmd = Self::create_xmrig_cmd_windows(args, path, &input_path, &output_path);
         let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+                let mut input: Box<dyn std::io::Write + Send> = Box::new(
+                    std::fs::File::options()
+                        .read(true)
+                        .write(true)
+                        .open(&input_path)
+                        .unwrap(),
+                );
+                let stdout: Box<dyn std::io::Read + Send> = Box::new(std::fs::File::open(&output_path).unwrap());
+
+                    } else if #[cfg(target_os = "linux")] {
+                let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
+                let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
+                let mut cmd = Self::create_xmrig_cmd_unix(args, path, stdin_reader, stdout_writer);
+        let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+                let mut input: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
+                let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_reader);
+
+                    } else if #[cfg(target_os ="macos")] {
+                use nix::sys::stat::Mode;
+                let temp_dir = std::env::temp_dir();
+                let mut input_path = temp_dir.to_path_buf();
+                input_path.push("xmrig_input");
+                let mut output_path = temp_dir.to_path_buf();
+                output_path.push("xmrig_output");
+
+
+                let _ = std::fs::remove_file(&input_path);
+                let _ = std::fs::remove_file(&output_path);
+
+                std::fs::create_dir_all(temp_dir).unwrap();
+                nix::unistd::mkfifo(&input_path, Mode::S_IRWXU).unwrap();
+
+                std::fs::File::create(&output_path).unwrap();
+
+                           let mut cmd = Self::create_xmrig_cmd_macos(args, path, &input_path, &output_path);
+        let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+                let input_fifo = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(input_path).unwrap();
+
+                let mut input: Box<dyn IoWrite + Send> = Box::new(input_fifo);
+                let stdout: Box<dyn std::io::Read + Send> = Box::new(std::fs::File::open(&output_path).unwrap());
+
+        }        }
 
         debug!("XMRig | Clearing GUI output...");
         gui_api.lock().unwrap().output.clear();
