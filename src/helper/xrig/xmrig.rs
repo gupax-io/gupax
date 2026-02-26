@@ -503,6 +503,7 @@ impl Helper {
 
                 std::fs::create_dir_all(temp_dir).unwrap();
                 std::fs::File::create(&input_path).unwrap();
+                std::fs::File::create(&output_path).unwrap();
                 let mut cmd = Self::create_xmrig_cmd_windows(args, path, &input_path, &output_path);
         let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
                 let mut input: Box<dyn std::io::Write + Send> = Box::new(
