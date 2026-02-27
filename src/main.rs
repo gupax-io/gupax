@@ -59,9 +59,9 @@ fn main() {
     #[cfg(target_os = "windows")]
     if args.elevated_helper {
         let args_elevated_helper = elevated_helper::cli::Args {
-            name_pipe_stdin: args.name_stdin_pipe,
-            name_pipe_stdout: args.name_stdout_pipe,
-            program_path: args.binary_path,
+            name_pipe_stdin: args.name_stdin_pipe.unwrap(),
+            name_pipe_stdout: args.name_stdout_pipe.unwrap(),
+            program_path: args.binary_path.unwrap(),
             program_args: args.arguments,
         };
         if let Err(e) = elevated_helper::run(args_elevated_helper) {

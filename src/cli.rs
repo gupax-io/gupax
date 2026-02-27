@@ -43,13 +43,16 @@ pub struct Cli {
     )]
     pub elevated_helper: bool,
     #[cfg(target_os = "windows")]
-    pub name_stdin_pipe: String,
+    #[arg(long)]
+    pub name_stdin_pipe: Option<String>,
     #[cfg(target_os = "windows")]
-    pub name_stdout_pipe: String,
+    #[arg(long)]
+    pub name_stdout_pipe: Option<String>,
     #[cfg(target_os = "windows")]
-    pub binary_path: std::path::PathBuf,
+    #[arg(long)]
+    pub binary_path: Option<std::path::PathBuf>,
     #[cfg(target_os = "windows")]
-    #[arg(value_delimiter = ',')]
+    #[arg(long, required(false), value_delimiter = ',')]
     pub arguments: Vec<String>,
 }
 
