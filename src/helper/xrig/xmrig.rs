@@ -486,8 +486,8 @@ impl Helper {
 
         use uuid::Uuid;
         let id = Uuid::new_v4();
-        let stdin_name = format!("xmrig_stdin_{}", id);
-        let stdout_name = format!("xmrig_stdout_{}", id);
+        let stdin_name = format!(r"\\.\pipe\xmrig_stdin_{}", id);
+        let stdout_name = format!(r"\\.\pipe\xmrig_stdout_{}", id);
 
         use elevated_helper::interprocess::os::windows::named_pipe::*;
 
