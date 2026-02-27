@@ -32,6 +32,25 @@ pub struct Cli {
     pub logfile: bool,
     #[clap(long, action)]
     pub daemon: bool,
+    #[cfg(target_os = "windows")]
+    #[arg(
+        long,
+        required(false),
+        requires("name_stdin_pipe"),
+        requires("name_stdout_pipe"),
+        requires("binary_path"),
+        requires("arguments")
+    )]
+    pub elevated_helper: bool,
+    #[cfg(target_os = "windows")]
+    pub name_stdin_pipe: String,
+    #[cfg(target_os = "windows")]
+    pub name_stdout_pipe: String,
+    #[cfg(target_os = "windows")]
+    pub binary_path: std::path::PathBuf,
+    #[cfg(target_os = "windows")]
+    #[arg(value_delimiter = ',')]
+    pub arguments: Vec<String>,
 }
 
 #[derive(Subcommand)]

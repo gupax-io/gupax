@@ -431,37 +431,29 @@ impl Helper {
     // Gupax should be admin on Windows, so just spawn XMRig normally.
     #[cfg(target_os = "windows")]
     fn create_xmrig_cmd_windows(
-        mut args: Vec<String>,
+        args: Vec<String>,
         path_binary: PathBuf,
-        input_path: &Path,
-        output_path: &Path,
+        stdin_name: &str,
+        stdout_name: &str,
     ) -> Command {
-        args.push("-l".to_string());
-        args.push(output_path.display().to_string());
+        let gupax_exe_path = std::env::current_exe().unwrap();
 
-        let args_str = args
-            .iter()
-            .map(|arg| format!("'{}'", arg))
-            .collect::<Vec<String>>()
-            .join(" ");
-
-        let get_content = format!(
-            "Get-Content '{}' -Wait | '{}' {}",
-            input_path.display(),
+        // Launch helper yourself however you want
+        let helper_args = format!(
+            "--elevated-helper --name_pipe_stdin {stdin_name} --name_pipe_stdout {stdout_name} --program_path {} --arguments {}",
             path_binary.display(),
-            args_str
+            args.join(",")
         );
 
-        let mut cmd = Command::new("powershell");
+        let mut cmd = std::process::Command::new("powershell");
         cmd.args([
             "-Command",
             &format!(
-                "Start-Process powershell -Verb RunAs -ArgumentList '-Command', '{}'",
-                get_content.replace("'", "''")
+                "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs",
+                gupax_exe_path.display(),
+                helper_args
             ),
         ]);
-
-        cmd.current_dir(path_binary.as_path().parent().unwrap());
         cmd
     }
 
@@ -477,7 +469,7 @@ impl Helper {
         gui_api: Arc<Mutex<PubXmrigApi>>,
         pub_api: Arc<Mutex<PubXmrigApi>>,
         args: Vec<String>,
-        path: std::path::PathBuf,
+        path: PathBuf,
         mut api_ip_port: String,
         token: &str,
         process_xvb: Arc<Mutex<Process>>,
@@ -490,66 +482,67 @@ impl Helper {
         proxy_img: &Arc<Mutex<ImgProxy>>,
     ) {
         cfg_if! {
-                    if #[cfg(windows)] {
-                let temp_dir = std::env::temp_dir();
-                let mut input_path = temp_dir.to_path_buf();
-                input_path.push("xmrig_input");
-                let mut output_path = temp_dir.to_path_buf();
-                output_path.push("xmrig_output");
+            if #[cfg(windows)] {
+
+        use uuid::Uuid;
+        let id = Uuid::new_v4();
+        let stdin_name = format!("xmrig_stdin_{}", id);
+        let stdout_name = format!("xmrig_stdout_{}", id);
+
+        use elevated_helper::interprocess::os::windows::named_pipe::*;
+
+        let stdin_listener =  PipeListenerOptions::new()
+            .path(Path::new(&stdin_name))
+            .mode(PipeMode::Bytes)
+            .create_duplex::<pipe_mode::Bytes>().unwrap();
+
+        let stdout_listener = PipeListenerOptions::new()
+            .path(Path::new(&stdout_name))
+            .mode(PipeMode::Bytes)
+            .create_duplex::<pipe_mode::Bytes>().unwrap();
+
+                    let mut cmd = Self::create_xmrig_cmd_windows(args, path, &stdin_name, &stdout_name);
+            let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
 
 
-                let _ = std::fs::remove_file(&input_path);
-                let _ = std::fs::remove_file(&output_path);
+        let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_listener.accept().unwrap());
+        let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_listener.accept().unwrap());
 
-                std::fs::create_dir_all(temp_dir).unwrap();
-                std::fs::File::create(&input_path).unwrap();
-                std::fs::File::create(&output_path).unwrap();
-                let mut cmd = Self::create_xmrig_cmd_windows(args, path, &input_path, &output_path);
-        let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
-                let mut input: Box<dyn std::io::Write + Send> = Box::new(
-                    std::fs::File::options()
-                        .read(true)
+                        } else if #[cfg(target_os = "linux")] {
+                    let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
+                    let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
+                    let mut cmd = Self::create_xmrig_cmd_unix(args, path, stdin_reader, stdout_writer);
+            let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+                    let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
+                    let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_reader);
+
+                        } else if #[cfg(target_os ="macos")] {
+                    use nix::sys::stat::Mode;
+                    let temp_dir = std::env::temp_dir();
+                    let mut input_path = temp_dir.to_path_buf();
+                    input_path.push("xmrig_input");
+                    let mut output_path = temp_dir.to_path_buf();
+                    output_path.push("xmrig_output");
+
+
+                    let _ = std::fs::remove_file(&input_path);
+                    let _ = std::fs::remove_file(&output_path);
+
+                    std::fs::create_dir_all(temp_dir).unwrap();
+                    nix::unistd::mkfifo(&input_path, Mode::S_IRWXU).unwrap();
+
+                    std::fs::File::create(&output_path).unwrap();
+
+                               let mut cmd = Self::create_xmrig_cmd_macos(args, path, &input_path, &output_path);
+            let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+                    let input_fifo = std::fs::OpenOptions::new()
                         .write(true)
-                        .open(&input_path)
-                        .unwrap(),
-                );
-                let stdout: Box<dyn std::io::Read + Send> = Box::new(std::fs::File::open(&output_path).unwrap());
+                        .open(input_path).unwrap();
 
-                    } else if #[cfg(target_os = "linux")] {
-                let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
-                let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
-                let mut cmd = Self::create_xmrig_cmd_unix(args, path, stdin_reader, stdout_writer);
-        let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
-                let mut input: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
-                let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_reader);
+                    let mut stdin: Box<dyn IoWrite + Send> = Box::new(input_fifo);
+                    let stdout: Box<dyn std::io::Read + Send> = Box::new(std::fs::File::open(&output_path).unwrap());
 
-                    } else if #[cfg(target_os ="macos")] {
-                use nix::sys::stat::Mode;
-                let temp_dir = std::env::temp_dir();
-                let mut input_path = temp_dir.to_path_buf();
-                input_path.push("xmrig_input");
-                let mut output_path = temp_dir.to_path_buf();
-                output_path.push("xmrig_output");
-
-
-                let _ = std::fs::remove_file(&input_path);
-                let _ = std::fs::remove_file(&output_path);
-
-                std::fs::create_dir_all(temp_dir).unwrap();
-                nix::unistd::mkfifo(&input_path, Mode::S_IRWXU).unwrap();
-
-                std::fs::File::create(&output_path).unwrap();
-
-                           let mut cmd = Self::create_xmrig_cmd_macos(args, path, &input_path, &output_path);
-        let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
-                let input_fifo = std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(input_path).unwrap();
-
-                let mut input: Box<dyn IoWrite + Send> = Box::new(input_fifo);
-                let stdout: Box<dyn std::io::Read + Send> = Box::new(std::fs::File::open(&output_path).unwrap());
-
-        }        }
+            }        }
 
         debug!("XMRig | Clearing GUI output...");
         gui_api.lock().unwrap().output.clear();
@@ -653,7 +646,7 @@ impl Helper {
             // Stop on [Stop/Restart] SIGNAL
             if Self::xmrig_signal_end(
                 &mut process.lock().unwrap(),
-                &mut input,
+                &mut stdin,
                 &child_pty,
                 &start,
                 &mut gui_api.lock().unwrap().output,
@@ -661,7 +654,7 @@ impl Helper {
                 break;
             }
             // Check vector of user input
-            check_user_input(&process, &mut input);
+            check_user_input(&process, &mut stdin);
             // Check if logs need resetting
             debug!("XMRig Watchdog | Attempting GUI log reset check");
             {
