@@ -43,7 +43,8 @@ impl eframe::App for App {
         if !self.xmrig_outside_warning_acknowledge
             && ProcessName::Xmrig
                 .is_process_running(&mut self.helper.lock().unwrap().sys_info.lock().unwrap())
-            && !process_states.find(ProcessName::Xmrig).alive
+            && process_states.find(ProcessName::Xmrig).state != ProcessState::Dead
+            && process_states.find(ProcessName::Xmrig).state != ProcessState::Failed
         {
             self.error_state.set("An instance of xmrig is running outside of Gupax.\nThis is not supported and could lead to crashes on this platform.\nPlease stop your local instance and start xmrig from Gupax Xmrig tab.", ErrorFerris::Error, ErrorButtons::Okay);
             self.xmrig_outside_warning_acknowledge = true;
