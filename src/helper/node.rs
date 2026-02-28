@@ -273,6 +273,10 @@ impl Helper {
             // 1b. Create command
             debug!("Node | Creating command...");
             let mut cmd = Command::new(&path);
+            #[cfg(target_os = "windows")]
+            use std::os::windows::process::CommandExt;
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000);
             cmd.stdin(Stdio::from(stdin_reader));
             cmd.stdout(Stdio::from(stdout_writer));
             cmd.args(args);

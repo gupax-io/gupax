@@ -640,6 +640,11 @@ impl Helper {
         let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
         let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
         let mut cmd = Command::new(&path);
+        #[cfg(target_os = "windows")]
+        use std::os::windows::process::CommandExt;
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000);
+
         cmd.stdin(Stdio::from(stdin_reader));
         cmd.stdout(Stdio::from(stdout_writer));
         cmd.args(args);

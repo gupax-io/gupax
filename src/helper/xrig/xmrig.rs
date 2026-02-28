@@ -445,7 +445,9 @@ impl Helper {
             args.join(",")
         );
 
+        use std::os::windows::process::CommandExt;
         let mut cmd = std::process::Command::new("powershell");
+        cmd.creation_flags(0x08000000);
         cmd.args([
             "-Command",
             &format!(
