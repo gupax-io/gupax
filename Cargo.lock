@@ -246,7 +246,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -257,7 +257,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1997,11 +1997,12 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 [[package]]
 name = "elevated-helper"
 version = "0.1.0"
-source = "git+https://github.com/Cyrix126/elevated-helper#0da79e6cc486f14fadf09c18751ccd7eb384bbbe"
+source = "git+https://github.com/Cyrix126/elevated-helper#88e16540362c7f8666ee25bb1d57c503de20c986"
 dependencies = [
  "clap",
  "conpty",
  "interprocess",
+ "windows 0.54.0",
 ]
 
 [[package]]

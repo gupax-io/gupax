@@ -64,7 +64,8 @@ fn main() {
             name_pipe_stdout: args.name_stdout_pipe.unwrap(),
             program_path: args.binary_path.unwrap(),
             program_args: args.arguments,
-            creation_flags: Some(BELOW_NORMAL_PRIORITY_CLASS.0),
+            creation_flags: None,
+            priority: Some(BELOW_NORMAL_PRIORITY_CLASS.0),
         };
         if let Err(e) = elevated_helper::run(args_elevated_helper) {
             eprintln!("Error: {}", e);
