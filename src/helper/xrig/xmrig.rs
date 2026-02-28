@@ -451,7 +451,7 @@ impl Helper {
         cmd.args([
             "-Command",
             &format!(
-                "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -Wait",
+                "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -Wait -Priority BelowNormal",
                 gupax_exe_path.display(),
                 helper_args
             ),
@@ -593,47 +593,6 @@ impl Helper {
         pub_api.lock().unwrap().pool = None;
         // 5. Loop as watchdog
         info!("XMRig | Entering watchdog mode... woof!");
-        // needs xmrig to be in belownormal priority or else Gupax will be in trouble if it does not have enough cpu time.
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            if let Ok(mut child) = std::process::Command::new("cmd")
-                .creation_flags(0x08000000)
-                .args(["/c", "wmic"])
-                .args([
-                    "process",
-                    "where",
-                    "name='xmrig.exe'",
-                    "CALL",
-                    "setpriority",
-                    "below normal",
-                ])
-                .spawn()
-                && let Ok(status) = child.wait()
-                && status.success()
-            {
-                info!("Xmrig | wmic command successful")
-            }
-            // Fallback to PowerShell (Windows 7+)
-            else if let Ok(mut child) = std::process::Command::new("powershell")
-                .creation_flags(0x08000000)
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    "Get-Process -Name xmrig -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = 'BelowNormal' }"
-                ])
-                .spawn()
-                && let Ok(status) = child.wait()
-                && status.success()
-            {
-                info!("Xmrig | PowerShell command successful");
-            } else {
-                warn!(
-                    "Xmrig | Unable to set priority. You might experience the GUI freezing with xmrig taking all the cpu time."
-                )
-            }
-        }
         loop {
             // Set timer
             let now = Instant::now();
