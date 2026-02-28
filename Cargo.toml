@@ -118,10 +118,8 @@ egui = {version="0.33", features=["callstack"]}
 
 # Windows dependencies
 [target.'cfg(windows)'.dependencies]
-# glow start on windows but not wgpu
-# need the same version that eframe is using with egui_wgpu
-# feature angle to enable support for old cpu on Windows
 wgpu = {version = "27.0.1", features=["angle"]}
+windows = "0.61.3"
 zip = "6.0.0"
 is_elevated = "0.1.2"
 elevated-helper = {git="https://github.com/Cyrix126/elevated-helper"}

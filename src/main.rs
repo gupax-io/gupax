@@ -58,11 +58,13 @@ fn main() {
     let args = Cli::parse();
     #[cfg(target_os = "windows")]
     if args.elevated_helper {
+        use windows::Win32::System::Threading::BELOW_NORMAL_PRIORITY_CLASS;
         let args_elevated_helper = elevated_helper::cli::Args {
             name_pipe_stdin: args.name_stdin_pipe.unwrap(),
             name_pipe_stdout: args.name_stdout_pipe.unwrap(),
             program_path: args.binary_path.unwrap(),
             program_args: args.arguments,
+            creation_flags: Some(BELOW_NORMAL_PRIORITY_CLASS.0),
         };
         if let Err(e) = elevated_helper::run(args_elevated_helper) {
             eprintln!("Error: {}", e);

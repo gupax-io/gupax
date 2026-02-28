@@ -451,7 +451,7 @@ impl Helper {
         cmd.args([
             "-Command",
             &format!(
-                "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -Wait -Priority BelowNormal",
+                "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -Wait",
                 gupax_exe_path.display(),
                 helper_args
             ),
