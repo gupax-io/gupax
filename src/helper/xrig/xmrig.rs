@@ -437,12 +437,16 @@ impl Helper {
         stdout_name: &str,
     ) -> Command {
         let gupax_exe_path = std::env::current_exe().unwrap();
+        let formatted_args = args
+            .iter()
+            .map(|arg| arg.replace("--", r"\-\-"))
+            .collect::<Vec<_>>();
 
         // Launch helper yourself however you want
         let helper_args = format!(
-            "--elevated-helper --name_pipe_stdin {stdin_name} --name_pipe_stdout {stdout_name} --program_path {} --arguments {}",
+            "--elevated-helper --name-stdin-pipe {stdin_name} --name-stdout-pipe {stdout_name} --binary-path {} --arguments {}",
             path_binary.display(),
-            args.join(",")
+            formatted_args.join(",")
         );
 
         let mut cmd = std::process::Command::new("powershell");
