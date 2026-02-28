@@ -2,9 +2,9 @@ use crate::constants::*;
 use crate::disk::state::{P2pool, StartOptionsMode, XmrigProxy};
 use crate::helper::p2pool::ImgP2pool;
 use crate::helper::xrig::update_xmrig_config;
-use crate::helper::{Helper, ProcessName, ProcessSignal, ProcessState};
+use crate::helper::{Helper, ProcessName, ProcessSignal, ProcessState, check_died_process};
 use crate::helper::{Pool, PubXvbApi};
-use crate::helper::{Process, check_died, check_user_input, sleep, sleep_end_loop};
+use crate::helper::{Process, check_user_input, sleep, sleep_end_loop};
 use crate::human::HumanTime;
 use crate::miscs::{client, output_console};
 use crate::regex::XMRIG_REGEX;
@@ -28,6 +28,7 @@ use std::{
     thread,
     time::*,
 };
+use sysinfo::System;
 use tokio::spawn;
 
 use super::Hashrate;
@@ -204,6 +205,7 @@ impl Helper {
         let proxy_state = proxy_state.clone();
         let proxy_img = Arc::clone(&helper.lock().unwrap().img_proxy);
         let pub_api_xvb = Arc::clone(&helper.lock().unwrap().pub_api_xvb);
+        let sys = Arc::clone(&helper.lock().unwrap().sys_info);
         thread::spawn(move || {
             Self::spawn_xmrig_watchdog(
                 process,
@@ -221,6 +223,7 @@ impl Helper {
                 &p2pool_img,
                 &proxy_state,
                 &proxy_img,
+                &sys,
             );
         });
     }
@@ -480,6 +483,7 @@ impl Helper {
         p2pool_img: &Arc<Mutex<ImgP2pool>>,
         proxy_state: &XmrigProxy,
         proxy_img: &Arc<Mutex<ImgProxy>>,
+        sys: &Arc<Mutex<System>>,
     ) {
         cfg_if! {
             if #[cfg(windows)] {
@@ -637,11 +641,11 @@ impl Helper {
             debug!("XMRig Watchdog | ----------- Start of loop -----------");
 
             // Check if the process secretly died without us knowing :)
-            if check_died(
-                &child_pty,
+            if check_died_process(
                 &mut process.lock().unwrap(),
                 &start,
                 &mut gui_api.lock().unwrap().output,
+                &mut sys.lock().unwrap(),
             ) {
                 break;
             }
