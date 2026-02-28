@@ -486,8 +486,8 @@ impl Helper {
 
         use uuid::Uuid;
         let id = Uuid::new_v4();
-        let stdin_name = format!(r"\\.\pipe\xmrig_stdin_{}", id);
-        let stdout_name = format!(r"\\.\pipe\xmrig_stdout_{}", id);
+        let stdin_name = format!(r"xmrig_stdin_{}", id);
+        let stdout_name = format!(r"xmrig_stdout_{}", id);
         let stdin_pipe_path = format!(r"\\.\pipe\{}", stdin_name);
         let stdout_pipe_path = format!(r"\\.\pipe\{}", stdout_name);
 
