@@ -488,16 +488,18 @@ impl Helper {
         let id = Uuid::new_v4();
         let stdin_name = format!(r"\\.\pipe\xmrig_stdin_{}", id);
         let stdout_name = format!(r"\\.\pipe\xmrig_stdout_{}", id);
+        let stdin_pipe_path = format!(r"\\.\pipe\{}", stdin_name);
+        let stdout_pipe_path = format!(r"\\.\pipe\{}", stdout_name);
 
         use elevated_helper::interprocess::os::windows::named_pipe::*;
 
         let stdin_listener =  PipeListenerOptions::new()
-            .path(Path::new(&stdin_name))
+            .path(Path::new(&stdin_pipe_path))
             .mode(PipeMode::Bytes)
             .create_duplex::<pipe_mode::Bytes>().unwrap();
 
         let stdout_listener = PipeListenerOptions::new()
-            .path(Path::new(&stdout_name))
+            .path(Path::new(&stdout_pipe_path))
             .mode(PipeMode::Bytes)
             .create_duplex::<pipe_mode::Bytes>().unwrap();
 
