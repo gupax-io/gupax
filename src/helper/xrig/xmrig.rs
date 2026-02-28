@@ -54,7 +54,7 @@ impl Helper {
         process: Arc<Mutex<Process>>,
     ) {
         let mut i = 0;
-        loop {
+        while process.lock().unwrap().is_alive() {
             let mut lines = BufReader::new(&mut reader).lines();
             // Run a ANSI escape sequence filter for the first few lines.
             while let Some(Ok(line)) = lines.next() {
@@ -553,13 +553,6 @@ impl Helper {
         debug!("XMRig | Clearing GUI output...");
         gui_api.lock().unwrap().output.clear();
 
-        let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
-        let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
-        spawn(
-            enclose!((pub_api_xvb, process_xp, p2pool_state, p2pool_img, process_p2pool, proxy_img, proxy_state, process) async move {
-                Self::read_pty_xmrig(output_parse, output_pub, stdout, process_xvb, process_xp, process_p2pool, &pub_api_xvb, &p2pool_state, &p2pool_img, &proxy_img, &proxy_state, process).await;
-            }),
-        );
         // 3. Set process state
         debug!("XMRig | Setting process state...");
         let mut lock = process.lock().unwrap();
@@ -567,6 +560,14 @@ impl Helper {
         lock.signal = ProcessSignal::None;
         lock.start = Instant::now();
         drop(lock);
+
+        let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
+        let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
+        spawn(
+            enclose!((pub_api_xvb, process_xp, p2pool_state, p2pool_img, process_p2pool, proxy_img, proxy_state, process) async move {
+                Self::read_pty_xmrig(output_parse, output_pub, stdout, process_xvb, process_xp, process_p2pool, &pub_api_xvb, &p2pool_state, &p2pool_img, &proxy_img, &proxy_state, process).await;
+            }),
+        );
 
         let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
         let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
