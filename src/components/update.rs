@@ -35,8 +35,7 @@ use crate::{
 };
 use anyhow::{Error, anyhow};
 use log::*;
-use rand::distr::Alphanumeric;
-use rand::{Rng, rng};
+use rand::{RngExt, distr::Alphanumeric, rng};
 use reqwest::header::{LOCATION, USER_AGENT};
 use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};

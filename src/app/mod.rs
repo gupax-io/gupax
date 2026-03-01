@@ -54,10 +54,10 @@ use crate::miscs::get_exe_dir;
 use crate::utils::constants::VISUALS_GUPAX_DARK;
 use crate::utils::constants::VISUALS_GUPAX_LIGHT;
 use crate::utils::macros::arc_mut;
-use crate::utils::sudo::SudoState;
 use copy_dir::copy_dir;
 use derive_more::derive::Display;
 use eframe::CreationContext;
+use eframe::Renderer;
 use egui::Context;
 use egui::Vec2;
 use egui::vec2;
@@ -91,7 +91,11 @@ pub type BackupNodes = Arc<Mutex<Vec<PoolNode>>>;
 // The state of the outer main [App].
 // See the [State] struct in [state.rs] for the
 // actual inner state of the tab settings.
-#[allow(dead_code)]
+#[derive(Clone)]
+pub struct AppEgui {
+    pub inner: Arc<egui::mutex::Mutex<App>>,
+}
+#[allow(unused)]
 pub struct App {
     // Misc state
     pub tab: Tab,   // What tab are we on?
@@ -154,8 +158,6 @@ pub struct App {
     pub p2pool_stdin: String, // The buffer between the p2pool console and the [Helper]
     pub xmrig_stdin: String, // The buffer between the xmrig console and the [Helper]
     pub xmrig_proxy_stdin: String, // The buffer between the xmrig-proxy console and the [Helper]
-    // Sudo State
-    pub sudo: Arc<Mutex<SudoState>>, // This is just a dummy struct on [Windows].
     // State from [--flags]
     pub no_startup: bool,
     // Gupax-P2Pool API
@@ -186,18 +188,27 @@ pub struct App {
     pub xmrig_outside_warning_acknowledge: bool,
 }
 
-impl App {
+impl AppEgui {
+    pub fn new(now: Instant, args: &Cli) -> Self {
+        let inner = App::new(now, args);
+        Self {
+            inner: Arc::new(egui::mutex::Mutex::new(inner)),
+        }
+    }
     #[cold]
     #[inline(never)]
     pub fn cc(cc: &CreationContext<'_>, resolution: Vec2, app: Self) -> Self {
         init_text_styles(
             &cc.egui_ctx,
-            crate::miscs::clamp_scale(app.state.gupax.selected_scale),
+            crate::miscs::clamp_scale(app.inner.lock().state.gupax.selected_scale),
         );
-        app.set_theme(&cc.egui_ctx);
-        Self { resolution, ..app }
+        app.inner.lock().set_theme(&cc.egui_ctx);
+        app.inner.lock().resolution = resolution;
+        app
     }
+}
 
+impl App {
     pub fn set_theme(&self, ctx: &Context) {
         match self.state.gupax.theme {
             GupaxTheme::Dark => ctx.set_visuals(VISUALS_GUPAX_DARK.clone()),
@@ -370,7 +381,6 @@ impl App {
             p2pool_stdin: String::with_capacity(10),
             xmrig_stdin: String::with_capacity(10),
             xmrig_proxy_stdin: String::with_capacity(10),
-            sudo: arc_mut!(SudoState::new()),
             resizing: false,
             alpha: 0,
             no_startup: false,
@@ -733,9 +743,13 @@ impl App {
         #[cfg(target_os = "windows")]
         if is_elevated::is_elevated() {
             app.admin = true;
-        } else {
-            error!("Windows | Admin user not detected!");
-            app.error_state.set("Gupax was not launched as Administrator!\nBe warned, XMRig might have less hashrate!".to_string(), ErrorFerris::Sudo, ErrorButtons::WindowsAdmin);
+            warn!("Windows | Admin user detected!");
+            app.error_state.set(
+                "Gupax was launched as Administrator!\nThis is not useful since Gupax v2.0.0"
+                    .to_string(),
+                ErrorFerris::Admin,
+                ErrorButtons::WindowsAdmin,
+            );
         }
         #[cfg(target_family = "unix")]
         if sudo_check::check() != sudo_check::RunningAs::User {
@@ -863,6 +877,13 @@ impl App {
                     );
                 }
             }
+        }
+    }
+    pub fn current_renderer(&self) -> Renderer {
+        if self.state.gupax.renderer_use_glow {
+            eframe::Renderer::Glow
+        } else {
+            eframe::Renderer::Wgpu
         }
     }
 }

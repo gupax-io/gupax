@@ -1,8 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use super::App;
-use crate::app::Tab;
 use crate::app::submenu_enum::SubmenuP2pool;
+use crate::app::{App, AppEgui, Tab};
 use crate::components::node::RemoteNodes;
 #[cfg(target_os = "windows")]
 use crate::errors::{ErrorButtons, ErrorFerris};
@@ -12,16 +11,20 @@ use crate::{NODE_MIDDLE, P2POOL_MIDDLE, SECOND, XMRIG_MIDDLE, XMRIG_PROXY_MIDDLE
 use derive_more::derive::{Deref, DerefMut};
 use log::debug;
 
-impl eframe::App for App {
+impl eframe::App for AppEgui {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let mut app = self.inner.lock();
         // *-------*
         // | DEBUG |
         // *-------*
+        if mitigate_wgpu_mem_leak(ctx) {
+            return;
+        }
         debug!("App | ----------- Start of [update()] -----------");
         // If closing
-        self.quit(ctx);
+        app.quit(ctx);
         // Handle Keys
-        let (key, wants_input) = self.keys_handle(ctx);
+        let (key, wants_input) = app.keys_handle(ctx);
 
         // Refresh AT LEAST once a second
         debug!("App | Refreshing frame once per second");
@@ -31,27 +34,27 @@ impl eframe::App for App {
         // These values are checked multiple times so
         // might as well check only once here to save
         // on a bunch of [.lock().unwrap()]s.
-        let mut process_states = ProcessStatesGui::new(self);
+        let mut process_states = ProcessStatesGui::new(&app);
         // resize window and fonts if button "set" has been clicked in Gupax tab
-        if self.must_resize {
-            init_text_styles(ctx, self.state.gupax.selected_scale);
-            self.must_resize = false;
+        if app.must_resize {
+            init_text_styles(ctx, app.state.gupax.selected_scale);
+            app.must_resize = false;
         }
         // check for windows that a local instance of xmrig is not running outside of Gupax. Important because it could lead to crashes on this platform.
         // Warn only once per restart of Gupax.
         #[cfg(target_os = "windows")]
-        if !self.xmrig_outside_warning_acknowledge
+        if !app.xmrig_outside_warning_acknowledge
             && ProcessName::Xmrig
-                .is_process_running(&mut self.helper.lock().unwrap().sys_info.lock().unwrap())
+                .is_process_running(&mut app.helper.lock().unwrap().sys_info.lock().unwrap())
             && !process_states.find(ProcessName::Xmrig).alive
         {
-            self.error_state.set("An instance of xmrig is running outside of Gupax.\nThis is not supported and could lead to crashes on this platform.\nPlease stop your local instance and start xmrig from Gupax Xmrig tab.", ErrorFerris::Error, ErrorButtons::Okay);
-            self.xmrig_outside_warning_acknowledge = true;
+            app.error_state.set("An instance of xmrig is running outside of Gupax.\nThis is not supported and could lead to crashes on this platform.\nPlease stop your local instance and start xmrig from Gupax Xmrig tab.", ErrorFerris::Error, ErrorButtons::Okay);
+            app.xmrig_outside_warning_acknowledge = true;
         }
         // If there's an error, display [ErrorState] on the whole screen until user responds
         debug!("App | Checking if there is an error in [ErrorState]");
-        if self.error_state.error {
-            self.quit_error_panel(ctx, &process_states, &key);
+        if app.error_state.error {
+            app.quit_error_panel(ctx, &process_states, &key);
             return;
         }
         // Compare [og == state] & [node_vec/pool_vec] and enable diff if found.
@@ -59,22 +62,24 @@ impl eframe::App for App {
         // contains Arc<Mutex>'s that cannot be compared easily.
         // They don't need to be compared anyway.
         debug!("App | Checking diff between [og] & [state]");
-        let og = self.og.lock().unwrap();
-        self.diff = og.status != self.state.status
-            || og.gupax != self.state.gupax
-            || og.node != self.state.node
-            || og.p2pool != self.state.p2pool
-            || og.xmrig != self.state.xmrig
-            || og.xmrig_proxy != self.state.xmrig_proxy
-            || og.xvb != self.state.xvb
-            || self.og_node_vec != self.node_vec
-            || self.og_pool_vec != self.pool_vec;
+        let og = app.og.lock().unwrap();
+        let diff = og.status != app.state.status
+            || og.gupax != app.state.gupax
+            || og.node != app.state.node
+            || og.p2pool != app.state.p2pool
+            || og.xmrig != app.state.xmrig
+            || og.xmrig_proxy != app.state.xmrig_proxy
+            || og.xvb != app.state.xvb
+            || app.og_node_vec != app.node_vec
+            || app.og_pool_vec != app.pool_vec;
         drop(og);
+        app.diff = diff;
 
+        let mut selected_nodes = None;
         // crawl/pinged/selected remote node refresh
-        if self.state.gupax.auto.crawl || self.tab == Tab::P2pool {
-            let mut crawler_lock = self.crawler.lock().unwrap();
-            let mut ping_lock = self.ping.lock().unwrap();
+        if app.state.gupax.auto.crawl || app.tab == Tab::P2pool {
+            let mut crawler_lock = app.crawler.lock().unwrap();
+            let mut ping_lock = app.ping.lock().unwrap();
             let crawling = crawler_lock.crawling;
             let ping_nodes = &mut ping_lock.nodes;
             let crawl_nodes = &mut crawler_lock.nodes;
@@ -87,27 +92,32 @@ impl eframe::App for App {
             }
 
             // refresh the selected node with the fastest from the pinged nodes if it was empty
-            if self.state.p2pool.selected_remote_node.is_none() {
-                self.state.p2pool.selected_remote_node = ping_nodes.first().cloned();
+            if app.state.p2pool.selected_remote_node.is_none() {
+                selected_nodes = ping_nodes.first().cloned();
             }
+        }
+        if (app.state.gupax.auto.crawl || app.tab == Tab::P2pool)
+            && app.state.p2pool.selected_remote_node.is_none()
+        {
+            app.state.p2pool.selected_remote_node = selected_nodes;
         }
         // replace backup host by custom ones when user is in p2pool advanced sub menu
         // Only if the backup host is different from the custom ones
-        if self.state.p2pool.submenu != SubmenuP2pool::Advanced && self.tab == Tab::P2pool {
-            let mut backup_hosts = self.backup_hosts.lock().unwrap();
-            if self.node_vec.iter().any(|(_, n)| backup_hosts.contains(n)) {
-                *backup_hosts = self.node_vec.iter().map(|n| n.1.clone()).collect();
+        if app.state.p2pool.submenu != SubmenuP2pool::Advanced && app.tab == Tab::P2pool {
+            let mut backup_hosts = app.backup_hosts.lock().unwrap();
+            if app.node_vec.iter().any(|(_, n)| backup_hosts.contains(n)) {
+                *backup_hosts = app.node_vec.iter().map(|n| n.1.clone()).collect();
             }
         }
 
-        self.top_panel(ctx);
-        self.bottom_panel(ctx, &key, wants_input, &process_states);
+        app.top_panel(ctx);
+        app.bottom_panel(ctx, &key, wants_input, &process_states);
         // xvb_is_alive is not the same for bottom and for middle.
         // for status we don't want to enable the column when it is retrying requests.
         // but also we don't want the user to be able to start it in this case.
         let p_xvb = process_states.find_mut(ProcessName::Xvb);
         p_xvb.alive = p_xvb.state != ProcessState::Dead;
-        self.middle_panel(ctx, frame, key, &process_states);
+        app.middle_panel(ctx, frame, key, &process_states);
     }
 }
 #[derive(Debug)]
@@ -179,4 +189,17 @@ impl ProcessStatesGui {
             .find(|p| p.name == name)
             .expect("This vec should always contains all Processes")
     }
+}
+
+/// Helper function to mitigate https://github.com/emilk/egui/issues/7434.
+///
+/// If this returns true, the app should early return in the `update()` function
+/// or call `wgpu::Device::poll()`
+fn mitigate_wgpu_mem_leak(ctx: &egui::Context) -> bool {
+    let mut is_minimized = false;
+    ctx.input(|reader| {
+        is_minimized = reader.viewport().minimized.unwrap_or_default();
+    });
+
+    is_minimized
 }

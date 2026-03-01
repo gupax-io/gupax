@@ -27,9 +27,9 @@ log=[]
 
 [dependencies]
 clap = {version="4.5", features=["cargo", "derive"]}
-anyhow = "1.0.100"
+anyhow = "1.0.101"
 benri = "0.1.12"
-bytes = "1.11.0"
+bytes = "1.11.1"
 dirs = "6.0.0"
 #--------------------------------------------------------------------------------
 egui = "0.33"
@@ -48,33 +48,33 @@ egui_extras = {version="0.33", features = ["image"] }
 ## Using [wgpu] actually crashes macOS (fixed in 0.20.x though).
 
 #--------------------------------------------------------------------------------
-env_logger = "0.11.8"
+env_logger = "0.11.9"
 figment = { version = "0.10.19", features = ["toml"] }
-reqwest = {version = "0.12.24", default-features=false, features=["json", "rustls-tls"]}
-reqwest-middleware = "0.4"
-reqwest-retry = "0.7"
+reqwest = {version = "0.13.2", default-features=false, features=["json", "default-tls"]}
+reqwest-middleware = "0.5"
+reqwest-retry = "0.9"
 image = { version = "0.25.9", features = ["png"] }
-log = "0.4.28"
+log = "0.4.29"
 num-format = { version = "0.4.4", default-features = false }
 once_cell = "1.21.3"
-rand = "0.9.2"
-regex = { version = "1.12.2", default-features = false, features = ["perf"] }
-rfd = "0.15.4"
+rand = "0.10.0"
+regex = { version = "1.12.3", default-features = false, features = ["perf"] }
+rfd = "0.17.2"
 serde = { version = "1.0.228", features = ["rc", "derive"] }
-serde_json = "1.0.145"
-sysinfo = { version = "0.37", default-features = false, features=["system"] }
+serde_json = "1.0.149"
+sysinfo = { version = "0.38", default-features = false, features=["system"] }
 # tls-api = "0.9.0"
-tokio = { version = "1.48.0", features = ["rt", "time", "macros", "process", "rt-multi-thread"] }
-toml = { version = "0.9.8", features = ["preserve_order"] }
+tokio = { version = "1.49.0", features = ["rt", "time", "macros", "process", "rt-multi-thread"] }
+toml = { version = "1.0.2", features = ["preserve_order"] }
 walkdir = "2.5.0"
 copy_dir = {git="https://github.com/decathorpe/copy_dir", rev="7541d89"}
 zeroize = "1.8.2"
 strsim = "0.11.1"
 strip-ansi-escapes = "0.2.1"
-derive_more = {version="2.0.1", default-features=false, features=["display", "deref", "deref_mut"]}
+derive_more = {version="2.1.1", default-features=false, features=["display", "deref", "deref_mut"]}
 serde-this-or-that = "0.5.0"
 readable = "0.16"
-chrono = {version="0.4.42", default-features=false, features=["clock", "std"]}
+chrono = {version="0.4.43", default-features=false, features=["clock", "std"]}
 enclose = "1.2.1"
 bounded-vec-deque = {version="0.1.1", default-features=false}
 cfg-if = "1.0"
@@ -94,9 +94,9 @@ port_check = "0.3"
 monero-crawler-lib = {git="https://github.com/Cyrix126/monero-crawler-rs", features=["rpc", "zmq"]}
 futures = "0.3"
 ## find ports used by a local monerod
-listeners = "0.3"
+listeners = "0.4"
 ## notifications
-notify-rust = "4.11"
+notify-rust = "4.12"
 ## handle Ctrl+C for daemon mode
 ctrlc = {version="3.5", features=["termination"]}
 
@@ -109,9 +109,9 @@ flate2 = "1.1"
 sudo = "0.6.0"
 # https://github.com/emilk/egui/releases/tag/0.30.0 see breaking change
 eframe = {version="0.33", features=["x11", "wayland"]}
-portable-pty = "0.9.0"
 # macOS
 [target.'cfg(target_os = "macos")'.dependencies]
+nix = { version = "0.31", features = ["fs"] }
 [dev-dependencies]
 egui = {version="0.33", features=["callstack"]}
 # egui = {git="https://github.com/emilk/egui", features=["callstack"]}
@@ -121,21 +121,17 @@ egui = {version="0.33", features=["callstack"]}
 
 # Windows dependencies
 [target.'cfg(windows)'.dependencies]
-# glow start on windows but not wgpu
-# need the same version that eframe is using with egui_wgpu
-# feature angle to enable support for old cpu on Windows
 wgpu = {version = "27.0.1", features=["angle"]}
-zip = "6.0.0"
+zip = "8.0.0"
+windows = "0.61.3"
 is_elevated = "0.1.2"
-## portable-pty upgrade on 0.9 will break terminals on windows 
-## it should always be at 0.8.1
-# portable-pty = "0.8.1"
-portable-pty = "0.8.1"
+elevated-helper = {git="https://github.com/Cyrix126/elevated-helper"}
+uuid = "1.21"
 
 # For Windows build (icon)
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1.12"
-static_vcruntime = "2.0"
+static_vcruntime = "3.0"
 
 # For macOS build (cargo-bundle)
 [package.metadata.bundle]

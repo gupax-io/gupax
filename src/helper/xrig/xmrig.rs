@@ -2,27 +2,28 @@ use crate::constants::*;
 use crate::disk::state::{P2pool, StartOptionsMode, XmrigProxy};
 use crate::helper::p2pool::ImgP2pool;
 use crate::helper::xrig::HashrateProvider;
-use crate::helper::{Helper, ProcessName, ProcessSignal, ProcessState};
+use crate::helper::{Helper, ProcessName, ProcessSignal, ProcessState, check_died};
 use crate::helper::{Pool, PubXvbApi};
-use crate::helper::{Process, check_died, check_user_input, sleep, sleep_end_loop};
+use crate::helper::{Process, check_user_input, sleep, sleep_end_loop};
 use crate::human::HumanTime;
 use crate::miscs::{client, output_console};
 use crate::regex::XMRIG_REGEX;
 use crate::utils::human::HumanNumber;
-use crate::utils::sudo::SudoState;
+use cfg_if::cfg_if;
 use enclose::{enc, enclose};
 use log::*;
-use portable_pty::Child;
 use readable::num::Unsigned;
 use readable::up::Uptime;
 use reqwest::header::AUTHORIZATION;
 use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
+use std::io::{BufRead, BufReader, Write as IoWrite};
+#[cfg(target_os = "linux")]
+use std::io::{PipeReader, PipeWriter};
 use std::path::Path;
 use std::{
-    fmt::Write,
     path::PathBuf,
-    process::Stdio,
     sync::{Arc, Mutex},
     thread,
     time::*,
@@ -31,6 +32,7 @@ use tokio::spawn;
 
 use super::Hashrate;
 use super::xmrig_proxy::ImgProxy;
+use std::process::{Child, Command};
 
 impl Helper {
     #[cold]
@@ -39,7 +41,7 @@ impl Helper {
     pub async fn read_pty_xmrig(
         output_parse: Arc<Mutex<String>>,
         output_pub: Arc<Mutex<String>>,
-        reader: Box<dyn std::io::Read + Send>,
+        mut reader: Box<dyn std::io::Read + Send>,
         process_xvb: Arc<Mutex<Process>>,
         process_xp: Arc<Mutex<Process>>,
         process_p2pool: Arc<Mutex<Process>>,
@@ -50,121 +52,71 @@ impl Helper {
         proxy_state: &XmrigProxy,
         process: Arc<Mutex<Process>>,
     ) {
-        use std::io::BufRead;
-        let mut stdout = std::io::BufReader::new(reader).lines();
-
-        // Run a ANSI escape sequence filter for the first few lines.
         let mut i = 0;
-        while let Some(Ok(line)) = stdout.next() {
-            let line = strip_ansi_escapes::strip_str(line);
-            // skip until the first line of xmrig is appearing, hiding input for sudo
-            #[cfg(target_family = "unix")]
-            if i == 0 && !line.contains("ABOUT") {
-                continue;
+        while process.lock().unwrap().is_alive() {
+            let mut lines = BufReader::new(&mut reader).lines();
+            // Run a ANSI escape sequence filter for the first few lines.
+            while let Some(Ok(line)) = lines.next() {
+                let line = strip_ansi_escapes::strip_str(line);
+                // skip until the first line of xmrig is appearing, hiding automatic input of gupax
+                if i == 0 && !line.contains("ABOUT") {
+                    continue;
+                }
+                if i == 0 && line.contains("ABOUT") {
+                    info!("Xmrig is started");
+                    process.lock().unwrap().state = ProcessState::NotMining;
+                }
+                if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
+                    error!("XMRig PTY Parse | Output error: {e}");
+                }
+                if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
+                    error!("XMRig PTY Pub | Output error: {e}");
+                }
+                if i > 7 {
+                    break;
+                } else {
+                    i += 1;
+                }
             }
-            if i == 0 && line.contains("ABOUT") {
-                info!("Xmrig is started");
-                process.lock().unwrap().state = ProcessState::NotMining;
-            }
-            if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
-                error!("XMRig PTY Parse | Output error: {e}");
-            }
-            if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
-                error!("XMRig PTY Pub | Output error: {e}");
-            }
-            if i > 7 {
-                break;
-            } else {
-                i += 1;
-            }
-        }
 
-        while let Some(Ok(line)) = stdout.next() {
-            // need to verify if pool still working
-            // for that need to catch "connect error"
-            // only check if xvb process is used and xmrig-proxy is not.
-            if process_xvb.lock().unwrap().is_alive() && !process_xp.lock().unwrap().is_alive() {
-                let proxy_port = proxy_state
-                    .current_ports(
-                        process_xp.lock().unwrap().is_alive(),
-                        &proxy_img.lock().unwrap(),
-                    )
-                    .0;
-                let p2pool_port = p2pool_state.current_port(
-                    process_p2pool.lock().unwrap().is_alive(),
-                    &p2pool_img.lock().unwrap(),
-                );
-                Pool::update_current_pool(
-                    &line,
-                    proxy_port,
-                    p2pool_port,
-                    &process_xvb,
-                    pub_api_xvb,
-                    ProcessName::Xmrig,
-                    p2pool_state.address.clone(),
-                );
+            while let Some(Ok(line)) = lines.next() {
+                // need to verify if pool still working
+                // for that need to catch "connect error"
+                // only check if xvb process is used and xmrig-proxy is not.
+                if process_xvb.lock().unwrap().is_alive() && !process_xp.lock().unwrap().is_alive()
+                {
+                    let proxy_port = proxy_state
+                        .current_ports(
+                            process_xp.lock().unwrap().is_alive(),
+                            &proxy_img.lock().unwrap(),
+                        )
+                        .0;
+                    let p2pool_port = p2pool_state.current_port(
+                        process_p2pool.lock().unwrap().is_alive(),
+                        &p2pool_img.lock().unwrap(),
+                    );
+                    Pool::update_current_pool(
+                        &line,
+                        proxy_port,
+                        p2pool_port,
+                        &process_xvb,
+                        pub_api_xvb,
+                        ProcessName::Xmrig,
+                        p2pool_state.address.clone(),
+                    );
+                }
+                //			println!("{}", line); // For debugging.
+                if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
+                    error!("XMRig PTY Parse | Output error: {e}");
+                }
+                if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
+                    error!("XMRig PTY Pub | Output error: {e}");
+                }
             }
-            //			println!("{}", line); // For debugging.
-            if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
-                error!("XMRig PTY Parse | Output error: {e}");
-            }
-            if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
-                error!("XMRig PTY Pub | Output error: {e}");
-            }
+            sleep!(100);
         }
     }
     //---------------------------------------------------------------------------------------------------- XMRig specific, most functions are very similar to P2Pool's
-    #[cold]
-    #[inline(never)]
-    // If processes are started with [sudo] on macOS, they must also
-    // be killed with [sudo] (even if I have a direct handle to it as the
-    // parent process...!). This is only needed on macOS, not Linux.
-    fn sudo_kill(pid: u32, sudo: &Arc<Mutex<SudoState>>) -> bool {
-        // Spawn [sudo] to execute [kill] on the given [pid]
-        let mut child = std::process::Command::new("sudo")
-            .args(["--stdin", "kill", "-9", &pid.to_string()])
-            .stdin(Stdio::piped())
-            .spawn()
-            .unwrap();
-        // only insert the password if the user is required to
-        if Self::password_needed() {
-            // Write the [sudo] password to STDIN.
-            let mut stdin = child.stdin.take().unwrap();
-            use std::io::Write;
-            if let Err(e) = writeln!(stdin, "{}\n", sudo.lock().unwrap().pass) {
-                error!("Sudo Kill | STDIN error: {e}");
-            }
-        }
-
-        // Return exit code of [sudo/kill].
-        child.wait().unwrap().success()
-    }
-
-    #[cold]
-    #[inline(never)]
-    /// if the user has his visudo configured to not ask a password using sudo, this will return false
-    pub fn password_needed() -> bool {
-        // Make sure sudo timestamp is reset
-        let reset = std::process::Command::new("sudo")
-            .arg("--reset-timestamp")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::piped())
-            .status();
-        match reset {
-            Ok(_) => {}
-            Err(_) => return true,
-        };
-        let cmd = std::process::Command::new("sudo")
-            .args(["-n", "true"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        if cmd.is_ok_and(|s| s.success()) {
-            return false;
-        }
-        true
-    }
     #[cold]
     #[inline(never)]
     // Just sets some signals for the watchdog thread to pick up on.
@@ -188,7 +140,6 @@ impl Helper {
         state_p2pool: &P2pool,
         state_proxy: &XmrigProxy,
         path: &Path,
-        sudo: Arc<Mutex<SudoState>>,
     ) {
         info!("XMRig | Attempting to restart...");
         helper.lock().unwrap().xmrig.lock().unwrap().signal = ProcessSignal::Restart;
@@ -203,7 +154,7 @@ impl Helper {
             }
             // Ok, process is not alive, start the new one!
             info!("XMRig | Old process seems dead, starting new one!");
-            Self::start_xmrig(&helper, &state, &state_p2pool, &state_proxy, &path, sudo);
+            Self::start_xmrig(&helper, &state, &state_p2pool, &state_proxy, &path);
         }));
         info!("XMRig | Restart ... OK");
     }
@@ -216,7 +167,6 @@ impl Helper {
         p2pool_state: &P2pool,
         proxy_state: &XmrigProxy,
         path: &Path,
-        sudo: Arc<Mutex<SudoState>>,
     ) {
         // get the stratum port of p2pool
         //
@@ -263,7 +213,6 @@ impl Helper {
                 pub_api,
                 args,
                 path,
-                sudo,
                 api_ip_port,
                 &token,
                 process_xvb,
@@ -442,22 +391,74 @@ impl Helper {
         args
     }
 
-    // We actually spawn [sudo] on Unix, with XMRig being the argument.
-    #[cfg(target_family = "unix")]
-    fn create_xmrig_cmd_unix(args: Vec<String>, path: PathBuf) -> portable_pty::CommandBuilder {
-        let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new("sudo");
-        cmd.arg("-S");
+    // We spawn [pkexec] on Unix, with XMRig being the argument.
+    #[cfg(target_os = "linux")]
+    fn create_xmrig_cmd_unix(
+        args: Vec<String>,
+        path_binary: PathBuf,
+        stdin_reader: PipeReader,
+        stdout_writer: PipeWriter,
+    ) -> Command {
+        use std::process::Stdio;
+
+        let mut cmd = Command::new("pkexec");
+        cmd.arg(path_binary.clone());
         cmd.args(args);
-        cmd.cwd(path.as_path().parent().unwrap());
+        cmd.current_dir(path_binary.as_path().parent().unwrap());
+        cmd.stdin(Stdio::from(stdin_reader));
+        cmd.stdout(Stdio::from(stdout_writer));
         cmd
     }
 
+    #[cfg(target_os = "macos")]
+    fn create_xmrig_cmd_macos(
+        mut args: Vec<String>,
+        path: PathBuf,
+        input_path: &Path,
+        output_path: &Path,
+    ) -> Command {
+        args.push("-l".to_string());
+        args.push(output_path.display().to_string());
+        let mut cmd = Command::new("osascript");
+        cmd.arg("-e");
+        let arg = format!(
+            "do shell script \"{} {} <> {}\" with administrator privileges",
+            path.display(),
+            args.join(" "),
+            input_path.display()
+        );
+        cmd.arg(arg);
+        cmd.current_dir(path.as_path().parent().unwrap());
+        cmd
+    }
     // Gupax should be admin on Windows, so just spawn XMRig normally.
     #[cfg(target_os = "windows")]
-    fn create_xmrig_cmd_windows(args: Vec<String>, path: PathBuf) -> portable_pty::CommandBuilder {
-        let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new(path.clone());
-        cmd.args(args);
-        cmd.cwd(path.as_path().parent().unwrap());
+    fn create_xmrig_cmd_windows(
+        args: Vec<String>,
+        path_binary: PathBuf,
+        stdin_name: &str,
+        stdout_name: &str,
+    ) -> Command {
+        let gupax_exe_path = std::env::current_exe().unwrap();
+
+        // Launch helper yourself however you want
+        let helper_args = format!(
+            "--elevated-helper --name-stdin-pipe {stdin_name} --name-stdout-pipe {stdout_name} --binary-path {} --arguments={}",
+            path_binary.display(),
+            args.join(",")
+        );
+
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("powershell");
+        cmd.creation_flags(0x08000000);
+        cmd.args([
+            "-Command",
+            &format!(
+                "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -Wait",
+                gupax_exe_path.display(),
+                helper_args
+            ),
+        ]);
         cmd
     }
 
@@ -472,9 +473,8 @@ impl Helper {
         process: Arc<Mutex<Process>>,
         gui_api: Arc<Mutex<PubXmrigApi>>,
         pub_api: Arc<Mutex<PubXmrigApi>>,
-        mut args: Vec<String>,
-        path: std::path::PathBuf,
-        sudo: Arc<Mutex<SudoState>>,
+        args: Vec<String>,
+        path: PathBuf,
         mut api_ip_port: String,
         token: &str,
         process_xvb: Arc<Mutex<Process>>,
@@ -487,80 +487,71 @@ impl Helper {
         proxy_img: &Arc<Mutex<ImgProxy>>,
         xmrig_img: Arc<Mutex<ImgXmrig>>,
     ) {
-        // The actual binary we're executing is [sudo], technically
-        // the XMRig path is just an argument to sudo, so add it.
-        // Before that though, add the ["--prompt"] flag and set it
-        // to emptiness so that it doesn't show up in the output.
-        if cfg!(unix) {
-            args.splice(..0, vec![path.display().to_string()]);
-            // do not use prompt when sudo is not needed
-            // success is still to false if sudo has not been used to test the password when starting xmrig
-            // which would happen if the user can use sudo without a password
-            if sudo.lock().unwrap().success {
-                args.splice(..0, vec![r#"--"#.to_string()]);
-                args.splice(..0, vec![r#"--prompt="#.to_string()]);
-            }
-        }
-        // 1a. Create PTY
-        debug!("XMRig | Creating PTY...");
-        let pty = portable_pty::native_pty_system();
-        let pair = pty
-            .openpty(portable_pty::PtySize {
-                rows: 100,
-                cols: 1000,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
-        // 4. Spawn PTY read thread
-        debug!("XMRig | Spawning PTY read thread...");
-        let reader = pair.master.try_clone_reader().unwrap(); // Get STDOUT/STDERR before moving the PTY
-        let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
-        let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
-        spawn(
-            enclose!((pub_api_xvb, process_xp, p2pool_state, p2pool_img, process_p2pool, proxy_img, proxy_state, process) async move {
-                Self::read_pty_xmrig(output_parse, output_pub, reader, process_xvb, process_xp, process_p2pool, &pub_api_xvb, &p2pool_state, &p2pool_img, &proxy_img, &proxy_state, process).await;
-            }),
-        );
-        // 1b. Create command
-        debug!("XMRig | Creating command...");
-        #[cfg(target_os = "windows")]
-        let cmd = Self::create_xmrig_cmd_windows(args, path);
-        #[cfg(target_family = "unix")]
-        let cmd = Self::create_xmrig_cmd_unix(args, path);
-        // 1c. Create child
-        debug!("XMRig | Creating child...");
-        let child_pty = Arc::new(Mutex::new(pair.slave.spawn_command(cmd).unwrap()));
-        drop(pair.slave);
+        cfg_if! {
+            if #[cfg(windows)] {
 
-        let mut stdin = pair.master.take_writer().unwrap();
-        // 2. Input [sudo] pass, wipe, then drop.
-        if cfg!(unix) && sudo.lock().unwrap().success {
-            debug!("XMRig | Inputting [sudo] and wiping...");
-            let max_sudo_prompt_time = Duration::from_secs(6);
-            let now = Instant::now();
-            while process.lock().unwrap().state != ProcessState::NotMining {
-                // let sudo the time to prompt
-                sleep!(30);
-                if let Err(e) = writeln!(stdin, "{}", sudo.lock().unwrap().pass) {
-                    error!("XMRig | Sudo STDIN error: {e}");
-                };
-                // let xmrig time to start before checking if it has started once again
-                sleep!(30);
-                // check that we do not get stuck here if for some reason the sudo prompt never occurs or xmrig does not start
-                if now.elapsed() > max_sudo_prompt_time {
-                    error!(
-                        "XMRig | Could not start with sudo in {} seconds",
-                        max_sudo_prompt_time.as_secs()
-                    );
-                }
-            }
-            SudoState::wipe(&sudo);
-            SudoState::reset(&sudo);
+        use uuid::Uuid;
+        let id = Uuid::new_v4();
+        let stdin_name = format!(r"xmrig_stdin_{}", id);
+        let stdout_name = format!(r"xmrig_stdout_{}", id);
+        let stdin_pipe_path = format!(r"\\.\pipe\{}", stdin_name);
+        let stdout_pipe_path = format!(r"\\.\pipe\{}", stdout_name);
 
-            info!("sudo wipe and output cleared");
-        }
-        // b) Reset GUI STDOUT just in case.
+        use elevated_helper::interprocess::os::windows::named_pipe::*;
+
+        let stdin_listener =  PipeListenerOptions::new()
+            .path(Path::new(&stdin_pipe_path))
+            .mode(PipeMode::Bytes)
+            .create_duplex::<pipe_mode::Bytes>().unwrap();
+
+        let stdout_listener = PipeListenerOptions::new()
+            .path(Path::new(&stdout_pipe_path))
+            .mode(PipeMode::Bytes)
+            .create_duplex::<pipe_mode::Bytes>().unwrap();
+
+                    let mut cmd = Self::create_xmrig_cmd_windows(args, path, &stdin_name, &stdout_name);
+            let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+
+
+        let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_listener.accept().unwrap());
+        let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_listener.accept().unwrap());
+
+                        } else if #[cfg(target_os = "linux")] {
+                    let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
+                    let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
+                    let mut cmd = Self::create_xmrig_cmd_unix(args, path, stdin_reader, stdout_writer);
+            let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+                    let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
+                    let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_reader);
+
+                        } else if #[cfg(target_os ="macos")] {
+                    use nix::sys::stat::Mode;
+                    let temp_dir = std::env::temp_dir();
+                    let mut input_path = temp_dir.to_path_buf();
+                    input_path.push("xmrig_input");
+                    let mut output_path = temp_dir.to_path_buf();
+                    output_path.push("xmrig_output");
+
+
+                    let _ = std::fs::remove_file(&input_path);
+                    let _ = std::fs::remove_file(&output_path);
+
+                    std::fs::create_dir_all(temp_dir).unwrap();
+                    nix::unistd::mkfifo(&input_path, Mode::S_IRWXU).unwrap();
+
+                    std::fs::File::create(&output_path).unwrap();
+
+                               let mut cmd = Self::create_xmrig_cmd_macos(args, path, &input_path, &output_path);
+            let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+                    let input_fifo = std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(input_path).unwrap();
+
+                    let mut stdin: Box<dyn IoWrite + Send> = Box::new(input_fifo);
+                    let stdout: Box<dyn std::io::Read + Send> = Box::new(std::fs::File::open(&output_path).unwrap());
+
+            }        }
+
         debug!("XMRig | Clearing GUI output...");
         gui_api.lock().unwrap().output.clear();
 
@@ -571,6 +562,14 @@ impl Helper {
         lock.signal = ProcessSignal::None;
         lock.start = Instant::now();
         drop(lock);
+
+        let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
+        let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
+        spawn(
+            enclose!((pub_api_xvb, process_xp, p2pool_state, p2pool_img, process_p2pool, proxy_img, proxy_state, process) async move {
+                Self::read_pty_xmrig(output_parse, output_pub, stdout, process_xvb, process_xp, process_p2pool, &pub_api_xvb, &p2pool_state, &p2pool_img, &proxy_img, &proxy_state, process).await;
+            }),
+        );
 
         let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
         let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
@@ -598,47 +597,6 @@ impl Helper {
         pub_api.lock().unwrap().pool = None;
         // 5. Loop as watchdog
         info!("XMRig | Entering watchdog mode... woof!");
-        // needs xmrig to be in belownormal priority or else Gupax will be in trouble if it does not have enough cpu time.
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            if let Ok(mut child) = std::process::Command::new("cmd")
-                .creation_flags(0x08000000)
-                .args(["/c", "wmic"])
-                .args([
-                    "process",
-                    "where",
-                    "name='xmrig.exe'",
-                    "CALL",
-                    "setpriority",
-                    "below normal",
-                ])
-                .spawn()
-                && let Ok(status) = child.wait()
-                && status.success()
-            {
-                info!("Xmrig | wmic command successful")
-            }
-            // Fallback to PowerShell (Windows 7+)
-            else if let Ok(mut child) = std::process::Command::new("powershell")
-                .creation_flags(0x08000000)
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    "Get-Process -Name xmrig -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = 'BelowNormal' }"
-                ])
-                .spawn()
-                && let Ok(status) = child.wait()
-                && status.success()
-            {
-                info!("Xmrig | PowerShell command successful");
-            } else {
-                warn!(
-                    "Xmrig | Unable to set priority. You might experience the GUI freezing with xmrig taking all the cpu time."
-                )
-            }
-        }
         let hashrate_provider =
             HashrateProvider::Xmrig(gui_api.clone(), xmrig_img.clone(), client.clone());
         loop {
@@ -658,10 +616,10 @@ impl Helper {
             // Stop on [Stop/Restart] SIGNAL
             if Self::xmrig_signal_end(
                 &mut process.lock().unwrap(),
+                &mut stdin,
                 &child_pty,
                 &start,
                 &mut gui_api.lock().unwrap().output,
-                &sudo,
             ) {
                 break;
             }
@@ -750,26 +708,17 @@ impl Helper {
     }
     fn xmrig_signal_end(
         process: &mut Process,
-        child_pty: &Arc<Mutex<Box<dyn Child + Sync + Send>>>,
+        stdin: &mut Box<dyn std::io::Write + Send>,
+        child_pty: &Arc<Mutex<Child>>,
         start: &Instant,
         gui_api_output_raw: &mut String,
-        sudo: &Arc<Mutex<SudoState>>,
     ) -> bool {
         let signal = &process.signal;
         if *signal == ProcessSignal::Stop || *signal == ProcessSignal::Restart {
             debug!("XMRig Watchdog | Stop/Restart SIGNAL caught");
-            // macOS requires [sudo] again to kill [XMRig]
-            if cfg!(target_os = "macos") {
-                // If we're at this point, that means the user has
-                // entered their [sudo] pass again, after we wiped it.
-                // So, we should be able to find it in our [Arc<Mutex<SudoState>>].
-                Self::sudo_kill(child_pty.lock().unwrap().process_id().unwrap(), sudo);
-                // And... wipe it again (only if we're stopping full).
-                // If we're restarting, the next start will wipe it for us.
-                if *signal != ProcessSignal::Restart {
-                    SudoState::wipe(sudo);
-                }
-            } else if let Err(e) = child_pty.lock().unwrap().kill() {
+            // send a Ctrl+C in the input, overriding the need to re-authenticate
+
+            if let Err(e) = stdin.write_all(&[0x03]) {
                 error!("XMRig Watchdog | Kill error: {e}");
             }
             let exit_status = match child_pty.lock().unwrap().wait() {

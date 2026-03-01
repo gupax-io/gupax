@@ -21,6 +21,8 @@ use reqwest::header::AUTHORIZATION;
 use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
+use std::io::PipeReader;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 use std::{
     path::Path,
@@ -47,6 +49,7 @@ use crate::{
     regex::{XMRIG_REGEX, detect_pool_xmrig},
 };
 use crate::{PROXY_API_PORT_DEFAULT, PROXY_PORT_DEFAULT, XMRIG_API_SUMMARY_ENDPOINT};
+use std::io::Write as IoWrite;
 
 use super::xmrig::{ImgXmrig, PubXmrigApi};
 impl Helper {
@@ -58,7 +61,7 @@ impl Helper {
     pub async fn read_pty_xp(
         output_parse: Arc<Mutex<String>>,
         output_pub: Arc<Mutex<String>>,
-        reader: Box<dyn std::io::Read + Send>,
+        reader: PipeReader,
         process_xvb: Arc<Mutex<Process>>,
         pub_api_xvb: &Arc<Mutex<PubXvbApi>>,
         process_p2pool: Arc<Mutex<Process>>,
@@ -377,35 +380,31 @@ impl Helper {
         process.lock().unwrap().start = Instant::now();
         // spawn pty
         debug!("XMRig-Proxy | Creating PTY...");
-        let pty = portable_pty::native_pty_system();
-        let pair = pty
-            .openpty(portable_pty::PtySize {
-                rows: 100,
-                cols: 1000,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
-        // 4. Spawn PTY read thread
-        debug!("XMRig-Proxy | Spawning PTY read thread...");
-        let reader = pair.master.try_clone_reader().unwrap(); // Get STDOUT/STDERR before moving the PTY
         let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
         let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
-        spawn(
-            enc!((pub_api_xvb, output_parse, output_pub, process_p2pool, p2pool_state, p2pool_img,  state) async move {
-                Self::read_pty_xp(output_parse, output_pub, reader, process_xvb, &pub_api_xvb, process_p2pool, &p2pool_state, &p2pool_img, &state).await;
-            }),
-        );
         // 1b. Create command
         debug!("XMRig-Proxy | Creating command...");
-        let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new(path.clone());
+
+        let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
+        let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
+        let mut cmd = Command::new(&path);
+        #[cfg(target_os = "windows")]
+        use std::os::windows::process::CommandExt;
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000);
         cmd.args(args);
-        cmd.cwd(path.as_path().parent().unwrap());
+        cmd.stdin(Stdio::from(stdin_reader));
+        cmd.stdout(Stdio::from(stdout_writer));
+        cmd.current_dir(path.parent().unwrap());
         // 1c. Create child
         debug!("XMRig-Proxy | Creating child...");
-        let child_pty = Arc::new(Mutex::new(pair.slave.spawn_command(cmd).unwrap()));
-        drop(pair.slave);
-        let mut stdin = pair.master.take_writer().unwrap();
+        let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+        spawn(
+            enc!((pub_api_xvb, output_parse, output_pub, process_p2pool, p2pool_state, p2pool_img,  state) async move {
+                Self::read_pty_xp(output_parse, output_pub, stdout_reader, process_xvb, &pub_api_xvb, process_p2pool, &p2pool_state, &p2pool_img, &state).await;
+            }),
+        );
+        let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
         // to refactor to let user use his own ports
         let api_summary_xp = format!(
             "http://127.0.0.1:{}/{}",

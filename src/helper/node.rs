@@ -22,8 +22,10 @@ use readable::byte::Byte;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{
+    io::PipeReader,
     net::{SocketAddr, ToSocketAddrs},
     path::Path,
+    process::{Command, Stdio},
     sync::{Arc, Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
@@ -41,6 +43,7 @@ use crate::{
     utils::constants::{NODE_RPC_PORT_DEFAULT, NODE_ZMQ_PORT_DEFAULT, SOCKET_MONERO_LOCAL_OUTSIDE},
 };
 use std::fmt::Write;
+use std::io::Write as IoWrite;
 
 use super::{Helper, HumanNumber, HumanTime, Process};
 
@@ -50,7 +53,7 @@ impl Helper {
     fn read_pty_node(
         output_parse: Arc<Mutex<String>>,
         output_pub: Arc<Mutex<String>>,
-        reader: Box<dyn std::io::Read + Send>,
+        reader: PipeReader,
     ) {
         use std::io::BufRead;
         let mut stdout = std::io::BufReader::new(reader).lines();
@@ -258,30 +261,24 @@ impl Helper {
         // spawn pty if we are starting it from gupax
         debug!("Node | Creating PTY...");
         let mut child_pty = None;
-        let mut stdin = None;
         let mut output_pub = None;
-        // pty on Windows must live as a the started process
-        let pty = portable_pty::native_pty_system();
-        let pair = pty
-            .openpty(portable_pty::PtySize {
-                rows: 100,
-                cols: 1000,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
+        let mut stdin: Option<Box<dyn IoWrite + Send>> = None;
+        let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
+        let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
         if ports_detected_local_node.is_none() {
             // 4. Spawn PTY read thread
             debug!("Node | Spawning PTY read thread...");
-            let reader = pair.master.try_clone_reader().unwrap(); // Get STDOUT/STDERR before moving the PTY
             let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
             output_pub = Some(Arc::clone(&process.lock().unwrap().output_pub));
-            spawn(enc!((output_parse, output_pub) async move {
-                Self::read_pty_node(output_parse, output_pub.unwrap(), reader);
-            }));
             // 1b. Create command
             debug!("Node | Creating command...");
-            let mut cmd = portable_pty::cmdbuilder::CommandBuilder::new(path.clone());
+            let mut cmd = Command::new(&path);
+            #[cfg(target_os = "windows")]
+            use std::os::windows::process::CommandExt;
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000);
+            cmd.stdin(Stdio::from(stdin_reader));
+            cmd.stdout(Stdio::from(stdout_writer));
             cmd.args(args);
             // if in simple state and enough free memory, enable full memory env
             if state.simple {
@@ -293,12 +290,14 @@ impl Helper {
             } else if state.full_memory {
                 cmd.env("MONERO_RANDOMX_FULL_MEM", "1");
             }
-            cmd.cwd(path.as_path().parent().unwrap());
+            cmd.current_dir(path.as_path().parent().unwrap());
             // 1c. Create child
             debug!("Node | Creating child...");
-            child_pty = Some(Arc::new(Mutex::new(pair.slave.spawn_command(cmd).unwrap())));
-            drop(pair.slave);
-            stdin = Some(pair.master.take_writer().unwrap());
+            child_pty = Some(Arc::new(Mutex::new(cmd.spawn().unwrap())));
+            stdin = Some(Box::new(stdin_writer));
+            spawn(enc!((output_parse, output_pub) async move {
+                Self::read_pty_node(output_parse, output_pub.unwrap(), stdout_reader);
+            }));
         }
         // set state
         let client = Client::new();
@@ -603,15 +602,12 @@ pub fn spawn_local_outside_checker(tx: Arc<OnceLock<CheckLocalOutsideNode>>) {
 
 #[tokio::main]
 async fn check_local_node_outside(tx: Arc<OnceLock<CheckLocalOutsideNode>>) {
-    let local_outside_node_ports = ProcessName::Node.ports_listen_sys();
-    if let Some(set_ports) = local_outside_node_ports
-        && !set_ports.is_empty()
-    {
-        let ports = set_ports.iter().cloned().collect::<Vec<u16>>();
+    let ports = ProcessName::Node.ports_listen_sys();
+    if !ports.is_empty() {
         let timeout = Duration::from_millis(1500);
-        if let Some(zmq) = is_zmq_capable(SOCKET_MONERO_LOCAL_OUTSIDE, &ports, timeout).await {
+        if let Some(zmq) = is_zmq_capable(SOCKET_MONERO_LOCAL_OUTSIDE.ip(), &ports, timeout).await {
             if let Some(rpc) = is_rpc_capable(
-                SOCKET_MONERO_LOCAL_OUTSIDE,
+                SOCKET_MONERO_LOCAL_OUTSIDE.ip(),
                 18081,
                 &ports,
                 timeout,

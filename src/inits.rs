@@ -1,15 +1,15 @@
+use crate::app::App;
 #[cfg(not(feature = "distro"))]
 use crate::components::update::Update;
 use crate::components::update::check_binary_path;
 use crate::helper::crawler::Crawler;
-use crate::helper::{Helper, ProcessName, ProcessSignal};
+use crate::helper::{Helper, ProcessName};
 use crate::utils::constants::{
     APP_MAX_HEIGHT, APP_MAX_WIDTH, APP_MIN_HEIGHT, APP_MIN_WIDTH, BYTES_ICON,
 };
 use crate::utils::regex::Regexes;
 use std::io::Write;
 //---------------------------------------------------------------------------------------------------- Init functions
-use crate::app::App;
 use crate::disk::state::*;
 use crate::{components::node::Ping, miscs::clamp_scale};
 use crate::{info, warn};
@@ -290,18 +290,14 @@ pub fn init_auto(app: &mut App) {
             warn!(
                 "Gupax | Xmrig instance is already running outside of Gupax ! Skipping auto-node..."
             );
-        } else if cfg!(windows) || !Helper::password_needed() {
+        } else {
             Helper::start_xmrig(
                 &app.helper,
                 &app.state.xmrig,
                 &app.state.p2pool,
                 &app.state.xmrig_proxy,
                 &app.state.gupax.absolute_xmrig_path,
-                Arc::clone(&app.sudo),
             );
-        } else {
-            app.sudo.lock().unwrap().signal = ProcessSignal::Start;
-            app.error_state.ask_sudo(&app.sudo);
         }
     } else {
         info!("Skipping auto-xmrig...");

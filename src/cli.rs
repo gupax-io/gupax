@@ -24,7 +24,7 @@ use crate::resets::reset_state;
 #[command(version = crate_version!())]
 #[command(about = crate_description!(), long_about = None)]
 #[command(next_line_help = true)]
-#[group(required = false, multiple = false)]
+#[group(required = false)]
 pub struct Cli {
     #[command(subcommand)]
     pub info: Option<GupaxData>,
@@ -32,6 +32,29 @@ pub struct Cli {
     pub logfile: bool,
     #[clap(long, action)]
     pub daemon: bool,
+    #[cfg(target_os = "windows")]
+    #[arg(
+        long,
+        requires("name_stdin_pipe"),
+        requires("name_stdout_pipe"),
+        requires("binary_path"),
+        requires("arguments"),
+        conflicts_with = "logfile",
+        conflicts_with = "daemon"
+    )]
+    pub elevated_helper: bool,
+    #[cfg(target_os = "windows")]
+    #[arg(long)]
+    pub name_stdin_pipe: Option<String>,
+    #[cfg(target_os = "windows")]
+    #[arg(long)]
+    pub name_stdout_pipe: Option<String>,
+    #[cfg(target_os = "windows")]
+    #[arg(long)]
+    pub binary_path: Option<std::path::PathBuf>,
+    #[cfg(target_os = "windows")]
+    #[arg(long, required(false), value_delimiter = ',')]
+    pub arguments: Vec<String>,
 }
 
 #[derive(Subcommand)]

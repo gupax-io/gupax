@@ -56,6 +56,7 @@ mod test {
             show_processes = ["Node", "P2pool", "Xmrig", "XmrigProxy", "Xvb"]
             notifications = ["Payout", "FirstP2poolShare", "FailedService", "DisconnectedMiner"]
             theme = "Dark"
+            renderer_use_glow = false
 
 			[gupax.auto]
             update = false

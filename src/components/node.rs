@@ -21,7 +21,7 @@ use derive_more::{Deref, DerefMut};
 use egui::Color32;
 use enclose::enc;
 use log::*;
-use rand::{Rng, rng};
+use rand::{RngExt, rng};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::net::{IpAddr, SocketAddr};

@@ -1,7 +1,3 @@
-use std::sync::{Arc, Mutex};
-
-use super::sudo::SudoState;
-
 //---------------------------------------------------------------------------------------------------- [ErrorState] struct
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -14,7 +10,6 @@ pub enum ErrorButtons {
     ResetNode,
     Okay,
     Quit,
-    Sudo,
     WindowsAdmin,
     Debug,
 }
@@ -26,7 +21,8 @@ pub enum ErrorFerris {
     Oops,
     Error,
     Panic,
-    Sudo,
+    #[cfg(target_os = "windows")]
+    Admin,
 }
 
 pub struct ErrorState {
@@ -76,20 +72,5 @@ impl ErrorState {
     // Just sets the current state to new, resetting it.
     pub fn reset(&mut self) {
         *self = Self::new();
-    }
-
-    // Instead of creating a whole new screen and system, this (ab)uses ErrorState
-    // to ask for the [sudo] when starting XMRig. Yes, yes I know, it's called "ErrorState"
-    // but rewriting the UI code and button stuff might be worse.
-    // It also resets the current [SudoState]
-    pub fn ask_sudo(&mut self, state: &Arc<Mutex<SudoState>>) {
-        *self = Self {
-            error: true,
-            msg: String::new(),
-            ferris: ErrorFerris::Sudo,
-            buttons: ErrorButtons::Sudo,
-            quit_twice: false,
-        };
-        SudoState::reset(state)
     }
 }

@@ -24,7 +24,7 @@ compile_error!("gupax is only compatible with 64-bit CPUs");
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux",)))]
 compile_error!("gupax is only built for windows/macos/linux");
 
-use crate::app::App;
+use crate::app::AppEgui;
 use crate::cli::Cli;
 use crate::daemon::start_daemon;
 //---------------------------------------------------------------------------------------------------- Imports
@@ -34,9 +34,8 @@ use crate::miscs::clean_dir;
 use crate::utils::*;
 use clap::Parser;
 use egui::Vec2;
-use log::info;
 use log::warn;
-use std::sync::Arc;
+use log::{error, info};
 use std::time::Instant;
 
 mod app;
@@ -56,6 +55,41 @@ extern crate sudo as sudo_check;
 //---------------------------------------------------------------------------------------------------- Main [App] frame
 fn main() {
     let args = Cli::parse();
+    #[cfg(target_os = "windows")]
+    if args.elevated_helper {
+        use windows::Win32::System::Threading::BELOW_NORMAL_PRIORITY_CLASS;
+        let args_elevated_helper = elevated_helper::cli::Args {
+            name_pipe_stdin: args.name_stdin_pipe.unwrap(),
+            name_pipe_stdout: args.name_stdout_pipe.unwrap(),
+            program_path: args.binary_path.unwrap(),
+            program_args: args.arguments,
+            creation_flags: None,
+            priority: Some(BELOW_NORMAL_PRIORITY_CLASS.0),
+        };
+        if let Err(e) = elevated_helper::run(args_elevated_helper) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        use sysinfo::System;
+        let mut sys = System::new();
+        let process = sys.processes_by_exact_name("xmrig.exe".as_ref()).next();
+
+        if let Some(process) = process {
+            let pid = process.pid();
+            loop {
+                use crate::utils::macros::sleep;
+
+                sleep!(5000);
+                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+                // check if xmrig is still alive
+                if sys.process(pid).is_none() {
+                    break;
+                }
+            }
+        }
+        std::process::exit(0);
+    }
+
     let now = Instant::now();
 
     // Set custom panic hook.
@@ -63,8 +97,10 @@ fn main() {
 
     // Init logger.
     init_logger(now, args.logfile);
-    let mut app = App::new(now, &args);
-    init_auto(&mut app);
+    let app = AppEgui::new(now, &args);
+    let mut app_lock = app.inner.lock();
+    init_auto(&mut app_lock);
+    drop(app_lock);
     // Gupax folder cleanup.
     match clean_dir() {
         Ok(_) => info!("Temporary folder cleanup ... OK"),
@@ -75,14 +111,14 @@ fn main() {
     );
 
     // if Gupax is started as a daemon, stay here and do not load the GUI
+
     if args.daemon {
         // if the app receives Ctrl+C, make sure to terminate all services
-        let app = Arc::new(app);
-        start_daemon(&app);
+        start_daemon(app.clone());
     } else {
         // Init GUI stuff.
-        let selected_width = app.state.gupax.selected_width as f32;
-        let selected_height = app.state.gupax.selected_height as f32;
+        let selected_width = app.inner.lock().state.gupax.selected_width as f32;
+        let selected_height = app.inner.lock().state.gupax.selected_height as f32;
         let initial_window_size = if selected_width > APP_MAX_WIDTH
             || selected_height > APP_MAX_HEIGHT
         {
@@ -91,24 +127,73 @@ fn main() {
             );
             Some(Vec2::new(APP_DEFAULT_WIDTH, APP_DEFAULT_HEIGHT))
         } else {
-            Some(Vec2::new(
-                app.state.gupax.selected_width as f32,
-                app.state.gupax.selected_height as f32,
-            ))
+            Some(Vec2::new(selected_width, selected_height))
         };
-        let options = init_options(initial_window_size);
+        info!("after daemon");
+        let mut options = init_options(initial_window_size);
+        options.renderer = app.inner.lock().current_renderer();
 
         let resolution = Vec2::new(selected_width, selected_height);
 
-        // Run Gupax.
-        eframe::run_native(
-            &app.name_version.clone(),
-            options,
-            Box::new(move |cc| {
-                egui_extras::install_image_loaders(&cc.egui_ctx);
-                Ok(Box::new(App::cc(cc, resolution, app)))
+        let name_version = app.inner.lock().name_version.clone();
+
+        if let Err(e) = eframe::run_native(
+            &name_version,
+            options.clone(),
+            Box::new({
+                info!(
+                    "starting Gupax with renderer: {}",
+                    app.inner.lock().current_renderer()
+                );
+                let app = app.clone();
+                move |cc| {
+                    egui_extras::install_image_loaders(&cc.egui_ctx);
+                    Ok(Box::new(AppEgui::cc(cc, resolution, app)))
+                }
             }),
-        )
-        .unwrap();
+        ) {
+            let mut guard = app.inner.lock();
+            error!(
+                "eframe crashed using the renderer: {}.Error: {e}",
+                guard.current_renderer()
+            );
+
+            warn!(
+                "Use the other renderer temporarily, the new renderer will be used at next startup if the settings are saved"
+            );
+            guard.state.gupax.renderer_use_glow = !guard.state.gupax.renderer_use_glow;
+
+            options.renderer = guard.current_renderer();
+
+            warn!(
+                "Restarting with Gupax with renderer {}",
+                guard.current_renderer()
+            );
+            drop(guard);
+            // app.
+            if let Err(e) = eframe::run_native(
+                &name_version,
+                options,
+                Box::new({
+                    info!(
+                        "starting Gupax with renderer: {}",
+                        app.inner.lock().current_renderer()
+                    );
+                    let app = app.clone();
+                    move |cc| {
+                        egui_extras::install_image_loaders(&cc.egui_ctx);
+                        Ok(Box::new(AppEgui::cc(cc, resolution, app)))
+                    }
+                }),
+            ) {
+                error!(
+                    "eframe crashed using the renderer: {}.Error: {e}",
+                    app.inner.lock().current_renderer()
+                );
+                error!(
+                    "crashed with both renderer: Please open an issue on https://github.com/gupax-io/gupax/issues"
+                );
+            }
+        }
     }
 }
