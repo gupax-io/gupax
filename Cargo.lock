@@ -2849,6 +2849,7 @@ dependencies = [
  "cfg-if",
  "chrono",
  "clap",
+ "conpty",
  "copy_dir",
  "ctrlc",
  "derive_more 2.1.1",

@@ -40,8 +40,8 @@ use crate::miscs::client;
 use crate::{
     GUPAX_VERSION_UNDERSCORE,
     helper::{
-        Helper, Process, ProcessName, ProcessSignal, ProcessState, check_died, check_user_input,
-        signal_end, sleep_end_loop,
+        Helper, Process, ProcessName, ProcessSignal, ProcessState, check_user_input, signal_end,
+        sleep_end_loop,
         xvb::{PubXvbApi, nodes::Pool},
     },
     macros::sleep,
@@ -50,6 +50,9 @@ use crate::{
 };
 use crate::{PROXY_API_PORT_DEFAULT, PROXY_PORT_DEFAULT, XMRIG_API_SUMMARY_ENDPOINT};
 use std::io::Write as IoWrite;
+
+#[cfg(not(target_os = "windows"))]
+use crate::helper::check_died;
 
 use super::xmrig::{ImgXmrig, PubXmrigApi};
 impl Helper {
@@ -398,7 +401,10 @@ impl Helper {
         cmd.current_dir(path.parent().unwrap());
         // 1c. Create child
         debug!("XMRig-Proxy | Creating child...");
+        #[cfg(not(target_os = "windows"))]
         let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+        #[cfg(target_os = "windows")]
+        let process_pty = Arc::new(Mutex::new(conpty::Process::spawn(cmd).unwrap()));
         spawn(
             enc!((pub_api_xvb, output_parse, output_pub, process_p2pool, p2pool_state, p2pool_img,  state) async move {
                 Self::read_pty_xp(output_parse, output_pub, stdout_reader, process_xvb, &pub_api_xvb, process_p2pool, &p2pool_state, &p2pool_img, &state).await;
@@ -446,8 +452,18 @@ impl Helper {
             let now = Instant::now();
             debug!("XMRig-Proxy Watchdog | ----------- Start of loop -----------");
             {
+                #[cfg(not(target_os = "windows"))]
                 if check_died(
                     &child_pty,
+                    &mut process.lock().unwrap(),
+                    &start,
+                    &mut gui_api.lock().unwrap().output,
+                ) {
+                    break;
+                }
+                #[cfg(target_os = "windows")]
+                if check_died_windows(
+                    &process_pty,
                     &mut process.lock().unwrap(),
                     &start,
                     &mut gui_api.lock().unwrap().output,
@@ -457,7 +473,7 @@ impl Helper {
                 // check signal
                 if signal_end(
                     &mut process.lock().unwrap(),
-                    Some(&child_pty.clone()),
+                    None,
                     &start,
                     &mut gui_api.lock().unwrap().output,
                 ) {
@@ -743,4 +759,63 @@ impl PrivXmrigProxyApi {
         }
         Ok(private)
     }
+}
+
+#[cfg(target_os = "windows")]
+fn check_died_windows(
+    process_pty: &Arc<Mutex<conpty::Process>>,
+    process: &mut Process,
+    start: &Instant,
+    gui_api_output_raw: &mut String,
+) -> bool {
+    use crate::utils::constants::HORI_CONSOLE;
+    use readable::up::Uptime;
+    // Check if the process secretly died without us knowing :)
+
+    let exit_success = if process_pty.lock().unwrap().is_alive() {
+        None
+    } else if let Ok(code) = process_pty.lock().unwrap().wait(None) {
+        if code == 0 { Some(true) } else { Some(false) }
+    } else {
+        None
+    };
+
+    if let Some(status) = exit_success {
+        debug!(
+            "{} Watchdog | Process secretly died on us! Getting exit status...",
+            process.name
+        );
+        let exit_status = match status {
+            true => {
+                process.state = ProcessState::Dead;
+                "Successful"
+            }
+            false => {
+                process.state = ProcessState::Failed;
+                "Failed"
+            }
+        };
+        let uptime = Uptime::from(start.elapsed());
+        info!(
+            "{} | Stopped ... Uptime was: [{}], Exit status: [{}]",
+            process.name, uptime, exit_status
+        );
+        if let Err(e) = writeln!(
+            *gui_api_output_raw,
+            "{}\n{} stopped | Uptime: [{}] | Exit status: [{}]\n{}\n\n\n\n",
+            process.name, HORI_CONSOLE, uptime, exit_status, HORI_CONSOLE
+        ) {
+            error!(
+                "{} Watchdog | GUI Uptime/Exit status write failed: {}",
+                process.name, e
+            );
+        }
+        process.signal = ProcessSignal::None;
+        debug!(
+            "{} Watchdog | Secret dead process reap OK, breaking",
+            process.name
+        );
+        return true;
+    }
+    false
 }

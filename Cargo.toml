@@ -126,6 +126,7 @@ windows = "0.62.2"
 is_elevated = "0.1.2"
 elevated-helper = {git="https://github.com/Cyrix126/elevated-helper"}
 uuid = "1.21"
+conpty = "0.7"
 
 # For Windows build (icon)
 [target.'cfg(windows)'.build-dependencies]
