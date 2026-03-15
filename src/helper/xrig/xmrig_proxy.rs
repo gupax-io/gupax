@@ -21,8 +21,8 @@ use reqwest::header::AUTHORIZATION;
 use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
-use std::io::PipeReader;
-use std::process::{Command, Stdio};
+use std::io::Read;
+use std::process::Command;
 use std::time::Duration;
 use std::{
     path::Path,
@@ -64,7 +64,7 @@ impl Helper {
     pub async fn read_pty_xp(
         output_parse: Arc<Mutex<String>>,
         output_pub: Arc<Mutex<String>>,
-        reader: PipeReader,
+        reader: impl Read,
         process_xvb: Arc<Mutex<Process>>,
         pub_api_xvb: &Arc<Mutex<PubXvbApi>>,
         process_p2pool: Arc<Mutex<Process>>,
@@ -388,7 +388,9 @@ impl Helper {
         // 1b. Create command
         debug!("XMRig-Proxy | Creating command...");
 
+        #[cfg(not(target_os = "windows"))]
         let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
+        #[cfg(not(target_os = "windows"))]
         let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
         let mut cmd = Command::new(&path);
         #[cfg(target_os = "windows")]
@@ -396,8 +398,10 @@ impl Helper {
         #[cfg(target_os = "windows")]
         cmd.creation_flags(0x08000000);
         cmd.args(args);
-        cmd.stdin(Stdio::from(stdin_reader));
-        cmd.stdout(Stdio::from(stdout_writer));
+        #[cfg(not(target_os = "windows"))]
+        cmd.stdin(std::process::Stdio::from(stdin_reader));
+        #[cfg(not(target_os = "windows"))]
+        cmd.stdout(std::process::Stdio::from(stdout_writer));
         cmd.current_dir(path.parent().unwrap());
         // 1c. Create child
         debug!("XMRig-Proxy | Creating child...");
@@ -405,6 +409,10 @@ impl Helper {
         let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
         #[cfg(target_os = "windows")]
         let process_pty = Arc::new(Mutex::new(conpty::Process::spawn(cmd).unwrap()));
+        #[cfg(target_os = "windows")]
+        let stdout_reader = process_pty.lock().unwrap().output().unwrap();
+        #[cfg(target_os = "windows")]
+        let stdin_writer = process_pty.lock().unwrap().input().unwrap();
         spawn(
             enc!((pub_api_xvb, output_parse, output_pub, process_p2pool, p2pool_state, p2pool_img,  state) async move {
                 Self::read_pty_xp(output_parse, output_pub, stdout_reader, process_xvb, &pub_api_xvb, process_p2pool, &p2pool_state, &p2pool_img, &state).await;
