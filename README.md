@@ -43,6 +43,7 @@ It is intended for end users and offers a friendly and easy user experience, whi
 * [FAQ](#FAQ)
 * [License](#license) 
 * [Mirror](#mirror) 
+* [Docker](#docker) 
 * [Donations](#donation) 
 
 ## Guide
@@ -208,6 +209,10 @@ When interacted (mouse moving over the window), it will uses about 4.5% CPU (bec
 
 ## Mirror
 In case Github repository is down, you can still find the source code at [librejo](https://librejo.monerodevs.org/Ecosystem/gupaxx)
+
+## Docker
+
+A community-maintained Docker image with noVNC browser access and optional Tor hidden service is available at [libre7/gupax-docker](https://github.com/libre-7/gupax-docker) ([Docker Hub](https://hub.docker.com/r/libre7/gupax-docker)).
 
 ## Donations
 If you'd like to thank me for the development of Gupax and/or motivate me to improve it you're welcome to send any amount of XMR to the following address:
