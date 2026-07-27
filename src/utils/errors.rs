@@ -6,6 +6,7 @@ pub enum ErrorButtons {
     UseDetectedLocalNode((u16, u16)),
     UseNonSyncedNode,
     StayQuit,
+    TrayOnClose,
     ResetState,
     ResetNode,
     Okay,

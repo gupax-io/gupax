@@ -32,6 +32,9 @@ pub struct Cli {
     pub logfile: bool,
     #[clap(long, action)]
     pub daemon: bool,
+    /// Start Gupax hidden in the system tray
+    #[clap(long, action, conflicts_with = "daemon")]
+    pub tray: bool,
     #[cfg(target_os = "windows")]
     #[arg(
         long,
@@ -91,6 +94,10 @@ pub fn parse_args<S: Into<String>>(mut app: App, args: &Cli, panic: S) -> App {
     if !panic.is_empty() {
         warn!("[Gupax error] {panic}");
         exit(1);
+    }
+    if args.tray {
+        app.start_in_tray_flag = true;
+        app.window_state = crate::app::WindowState::StartingInTray;
     }
     if let Some(arg) = &args.info {
         match arg {

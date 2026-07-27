@@ -102,6 +102,14 @@ ctrlc = {version="3.5", features=["termination"]}
 
 tokio-stream = {version = "0.1", default-features=false}
 thiserror = "2.0"
+
+# System tray
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tray-icon = "0.24"
+[target.'cfg(target_os = "linux")'.dependencies]
+# async-io backend: ksni runs its own reactor thread, no ambient tokio runtime needed
+ksni = {version="0.3", default-features=false, features=["blocking", "async-io"]}
+
 # Unix dependencies
 [target.'cfg(unix)'.dependencies]
 bzip2-rs = "0.1"
@@ -123,11 +131,13 @@ egui = {git="https://github.com/emilk/egui", rev="f32727d", features=["callstack
 # Windows dependencies
 [target.'cfg(windows)'.dependencies]
 zip = "8.2.0"
-windows = "0.62.2"
+windows = {version="0.62.2", features=["Win32_Foundation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"]}
 is_elevated = "0.1.2"
 elevated-helper = {git="https://github.com/Cyrix126/elevated-helper"}
 uuid = "1.22"
 conpty = "0.7"
+# to get the HWND of the main window for the tray (same version as eframe/winit)
+raw-window-handle = "0.6"
 
 # For Windows build (icon)
 [target.'cfg(windows)'.build-dependencies]

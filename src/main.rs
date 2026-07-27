@@ -26,16 +26,20 @@ compile_error!("gupax is only compatible with 64-bit CPUs");
 compile_error!("gupax is only built for windows/macos/linux");
 
 use crate::app::AppEgui;
+use crate::app::eframe_impl::{gui_background_loop, run_gui, start_in_tray};
 use crate::cli::Cli;
 use crate::daemon::start_daemon;
+use crate::tray::{TrayChannel, TraySlot};
+use crate::utils::single_instance;
 //---------------------------------------------------------------------------------------------------- Imports
 use crate::constants::*;
-use crate::inits::{init_auto, init_logger, init_options};
+use crate::inits::{init_auto, init_logger};
 use crate::utils::*;
 use clap::Parser;
 use egui::Vec2;
+use log::info;
 use log::warn;
-use log::{error, info};
+use std::rc::Rc;
 use std::time::Instant;
 
 mod app;
@@ -46,6 +50,7 @@ mod disk;
 mod helper;
 mod inits;
 mod miscs;
+mod tray;
 mod utils;
 
 // Sudo (dummy values for Windows)
@@ -98,6 +103,19 @@ fn main() {
     // Init logger.
     init_logger(now, args.logfile);
     let app = AppEgui::new(now, &args);
+    // The command channel between the tray/second launches and the GUI;
+    // it lives for the whole process (windows and tray icons come and go).
+    let tray_channel = Rc::new(TrayChannel::new());
+    let tray_slot = TraySlot::default();
+    // A second GUI launch shows the window of the running instance
+    // instead of starting a duplicate (and its auto-started services).
+    if !args.daemon {
+        let name_version = app.inner.lock().name_version.clone();
+        if !single_instance::init(tray_channel.sender(), &name_version) {
+            info!("Gupax is already running: told it to show its window, exiting");
+            return;
+        }
+    }
     let mut app_lock = app.inner.lock();
     init_auto(&mut app_lock);
     drop(app_lock);
@@ -131,70 +149,28 @@ fn main() {
             Some(Vec2::new(selected_width, selected_height))
         };
         info!("after daemon");
-        let mut options = init_options(initial_window_size);
-        options.renderer = app.inner.lock().current_renderer();
-
         let resolution = Vec2::new(selected_width, selected_height);
-
         let name_version = app.inner.lock().name_version.clone();
-
-        if let Err(e) = eframe::run_native(
-            &name_version,
-            options.clone(),
-            Box::new({
-                info!(
-                    "starting Gupax with renderer: {}",
-                    app.inner.lock().current_renderer()
-                );
-                let app = app.clone();
-                move |cc| {
-                    egui_extras::install_image_loaders(&cc.egui_ctx);
-                    Ok(Box::new(AppEgui::cc(cc, resolution, app)))
-                }
-            }),
-        ) {
-            let mut guard = app.inner.lock();
-            error!(
-                "eframe crashed using the renderer: {}.Error: {e}",
-                guard.current_renderer()
-            );
-
-            warn!(
-                "Use the other renderer temporarily, the new renderer will be used at next startup if the settings are saved"
-            );
-            guard.state.gupax.renderer_use_glow = !guard.state.gupax.renderer_use_glow;
-
-            options.renderer = guard.current_renderer();
-
-            warn!(
-                "Restarting with Gupax with renderer {}",
-                guard.current_renderer()
-            );
-            drop(guard);
-            // app.
-            if let Err(e) = eframe::run_native(
+        // [--tray] on Linux starts waiting in the tray, without any window
+        if start_in_tray(&app, &tray_slot, &tray_channel) {
+            run_gui(
+                &app,
+                &tray_slot,
+                &tray_channel,
+                initial_window_size,
+                resolution,
                 &name_version,
-                options,
-                Box::new({
-                    info!(
-                        "starting Gupax with renderer: {}",
-                        app.inner.lock().current_renderer()
-                    );
-                    let app = app.clone();
-                    move |cc| {
-                        egui_extras::install_image_loaders(&cc.egui_ctx);
-                        Ok(Box::new(AppEgui::cc(cc, resolution, app)))
-                    }
-                }),
-            ) {
-                error!(
-                    "eframe crashed using the renderer: {}.Error: {e}",
-                    app.inner.lock().current_renderer()
-                );
-                error!(
-                    "crashed with both renderer: Please open an issue on https://github.com/gupax-io/gupax/issues"
-                );
-            }
+            );
         }
+        // On Linux, hiding to the tray closes the window: keep running in
+        // the background and re-create the window when asked from the tray.
+        gui_background_loop(
+            &app,
+            &tray_slot,
+            &tray_channel,
+            initial_window_size,
+            resolution,
+            &name_version,
+        );
     }
 }

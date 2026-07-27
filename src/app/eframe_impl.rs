@@ -1,7 +1,8 @@
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use crate::app::submenu_enum::SubmenuP2pool;
-use crate::app::{App, AppEgui, Tab};
+use crate::app::{App, AppEgui, Tab, WindowState};
 use crate::components::node::RemoteNodes;
 #[cfg(not(feature = "distro"))]
 use crate::errors::{ErrorButtons, ErrorFerris};
@@ -11,14 +12,300 @@ use crate::inits::init_text_styles;
 use crate::utils::errors::WarnUpdateData;
 use crate::{NODE_MIDDLE, P2POOL_MIDDLE, SECOND, XMRIG_MIDDLE, XMRIG_PROXY_MIDDLE, XVB_MIDDLE};
 use derive_more::derive::{Deref, DerefMut};
-use log::debug;
+use log::{debug, error, info, warn};
 
-impl eframe::App for AppEgui {
+/// The eframe shell around [`AppEgui`], and the owner of everything that
+/// must stay on the main thread: the tray icon is not `Send` on
+/// Windows/macOS, so it can not live inside [`App`]/[`AppEgui`], which
+/// other threads hold (e.g. the Ctrl+C handler in daemon mode).
+/// Dropped and re-created with the window on Linux, while its fields'
+/// shared contents live on in `main()`.
+pub struct GuiApp {
+    pub app: AppEgui,
+    /// Filled lazily on the first frame, emptied when disabled.
+    /// Shared with `main()` so the tray outlives the window on Linux.
+    tray_slot: crate::tray::TraySlot,
+    /// Command channel between tray/single-instance senders and the GUI.
+    tray_channel: Rc<crate::tray::TrayChannel>,
+    /// Tray creation failed: don't retry every frame, and never hide the
+    /// window (the app would become unreachable).
+    tray_failed: bool,
+}
+
+impl GuiApp {
+    pub fn cc(
+        cc: &eframe::CreationContext<'_>,
+        resolution: egui::Vec2,
+        app: AppEgui,
+        tray_slot: crate::tray::TraySlot,
+        tray_channel: Rc<crate::tray::TrayChannel>,
+    ) -> Self {
+        let app = AppEgui::cc(cc, resolution, app);
+        #[cfg(target_os = "windows")]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = cc.window_handle()
+                && let RawWindowHandle::Win32(h) = handle.as_raw()
+            {
+                crate::tray::MAIN_WINDOW_HWND
+                    .store(h.hwnd.get(), std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        // Point the wake-up callbacks to the (re-)created window's context.
+        tray_channel.set_context(&cc.egui_ctx);
+        Self {
+            app,
+            tray_slot,
+            tray_channel,
+            tray_failed: false,
+        }
+    }
+
+    /// Create or remove the tray icon depending on the current settings.
+    fn tray_sync(&mut self) {
+        let wants_tray = {
+            let app = self.app.inner.lock();
+            app.state.gupax.auto.hide_to_tray
+                || app.state.gupax.auto.start_with_tray
+                || app.start_in_tray_flag
+        };
+        let mut slot = self.tray_slot.lock();
+        if wants_tray && slot.is_none() && !self.tray_failed {
+            match crate::tray::TrayManager::new(self.tray_channel.sender()) {
+                Ok(tray) => {
+                    *slot = Some(tray);
+                    self.app.inner.lock().tray_active = true;
+                }
+                Err(e) => {
+                    warn!("Tray | creation failed, tray features are disabled: {e}");
+                    self.tray_failed = true;
+                    let mut app = self.app.inner.lock();
+                    // abandon a pending [--tray] hiding, it needs a tray
+                    if app.window_state == WindowState::StartingInTray {
+                        app.window_state = WindowState::Visible;
+                    }
+                }
+            }
+        } else if !wants_tray && slot.is_some() {
+            *slot = None;
+            self.app.inner.lock().tray_active = false;
+        }
+    }
+
+    /// Keep the tray's Show/Hide menu entry in sync with the window state
+    /// (deduplicated inside [`crate::tray::TrayManager`]).
+    fn tray_refresh(&self) {
+        let visible = self.app.inner.lock().window_state == WindowState::Visible;
+        if let Some(tray) = self.tray_slot.lock().as_ref() {
+            tray.set_window_visible(visible);
+        }
+    }
+}
+
+/// [--tray] on Linux: create the tray before any window, so not even a
+/// hidden one exists until asked for; [`gui_background_loop`] then waits.
+/// Returns whether a window must be created right away, which is the case
+/// everywhere else: Windows/macOS need a running event loop for their tray
+/// and hide the first window in [`GuiApp::logic`] instead.
+pub fn start_in_tray(
+    app: &AppEgui,
+    tray_slot: &crate::tray::TraySlot,
+    tray_channel: &crate::tray::TrayChannel,
+) -> bool {
+    if !crate::tray::HIDE_BY_CLOSING || app.inner.lock().window_state != WindowState::StartingInTray
+    {
+        return true;
+    }
+    match crate::tray::TrayManager::new(tray_channel.sender()) {
+        Ok(tray) => {
+            *tray_slot.lock() = Some(tray);
+            let mut app = app.inner.lock();
+            app.tray_active = true;
+            app.window_state = WindowState::HiddenToTray;
+            false
+        }
+        Err(e) => {
+            warn!("Tray | creation failed, starting with a window: {e}");
+            app.inner.lock().window_state = WindowState::Visible;
+            true
+        }
+    }
+}
+
+/// Block until the tray (or a second Gupax launch) asks to show the
+/// window. A Quit command shuts Gupax down right here; a dead channel
+/// shows the window, because without one it would be unreachable.
+fn wait_for_show(
+    app: &AppEgui,
+    tray_slot: &crate::tray::TraySlot,
+    tray_channel: &crate::tray::TrayChannel,
+) {
+    match tray_channel.rx.recv() {
+        Ok(crate::tray::TrayCmd::Quit) => crate::tray::quit_from_tray(app, tray_slot),
+        Ok(crate::tray::TrayCmd::ToggleShowHide | crate::tray::TrayCmd::Show) => {
+            // coalesce queued commands into a single "show"; Quit wins
+            if crate::tray::drain(&tray_channel.rx).quit {
+                crate::tray::quit_from_tray(app, tray_slot);
+            }
+        }
+        Err(_) => warn!("Tray | command channel is gone, showing the window"),
+    }
+}
+
+/// On Linux hiding to the tray closes the window instead of unmapping it
+/// (`eframe::run_native` returns while Gupax keeps running), and this loop
+/// re-creates it on the next tray activation, until a real quit.
+pub fn gui_background_loop(
+    app: &AppEgui,
+    tray_slot: &crate::tray::TraySlot,
+    tray_channel: &Rc<crate::tray::TrayChannel>,
+    initial_window_size: Option<egui::Vec2>,
+    resolution: egui::Vec2,
+    name_version: &str,
+) {
+    while app.inner.lock().window_state == WindowState::HiddenToTray {
+        info!("Tray | running in the background without a window");
+        if let Some(tray) = tray_slot.lock().as_ref() {
+            tray.set_window_visible(false);
+        }
+        wait_for_show(app, tray_slot, tray_channel);
+        info!("Tray | creating the window");
+        app.inner.lock().window_state = WindowState::Visible;
+        run_gui(
+            app,
+            tray_slot,
+            tray_channel,
+            initial_window_size,
+            resolution,
+            name_version,
+        );
+    }
+}
+
+/// Run the eframe event loop until the window closes. If the configured
+/// renderer crashes, flip to the other one and retry once (the flipped
+/// choice is kept at the next state save).
+pub fn run_gui(
+    app: &AppEgui,
+    tray_slot: &crate::tray::TraySlot,
+    tray_channel: &Rc<crate::tray::TrayChannel>,
+    initial_window_size: Option<egui::Vec2>,
+    resolution: egui::Vec2,
+    name_version: &str,
+) {
+    let mut options = crate::inits::init_options(initial_window_size);
+    options.renderer = app.inner.lock().current_renderer();
+    info!(
+        "starting Gupax with renderer: {}",
+        app.inner.lock().current_renderer()
+    );
+    if let Err(e) = eframe::run_native(
+        name_version,
+        options.clone(),
+        app_creator(app, tray_slot, tray_channel, resolution),
+    ) {
+        let mut guard = app.inner.lock();
+        error!(
+            "eframe crashed using the renderer: {}.Error: {e}",
+            guard.current_renderer()
+        );
+        warn!(
+            "Use the other renderer temporarily, the new renderer will be used at next startup if the settings are saved"
+        );
+        guard.state.gupax.renderer_use_glow = !guard.state.gupax.renderer_use_glow;
+        options.renderer = guard.current_renderer();
+        warn!(
+            "Restarting with Gupax with renderer {}",
+            guard.current_renderer()
+        );
+        drop(guard);
+        if let Err(e) = eframe::run_native(
+            name_version,
+            options,
+            app_creator(app, tray_slot, tray_channel, resolution),
+        ) {
+            error!(
+                "eframe crashed using the renderer: {}.Error: {e}",
+                app.inner.lock().current_renderer()
+            );
+            error!(
+                "crashed with both renderer: Please open an issue on https://github.com/gupax-io/gupax/issues"
+            );
+        }
+    }
+}
+
+fn app_creator(
+    app: &AppEgui,
+    tray_slot: &crate::tray::TraySlot,
+    tray_channel: &Rc<crate::tray::TrayChannel>,
+    resolution: egui::Vec2,
+) -> eframe::AppCreator<'static> {
+    let app = app.clone();
+    let tray_slot = tray_slot.clone();
+    let tray_channel = tray_channel.clone();
+    Box::new(move |cc| {
+        egui_extras::install_image_loaders(&cc.egui_ctx);
+        Ok(Box::new(GuiApp::cc(
+            cc,
+            resolution,
+            app,
+            tray_slot,
+            tray_channel,
+        )))
+    })
+}
+
+impl eframe::App for GuiApp {
+    // eframe calls this even while the window is hidden, unlike [ui].
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        use egui::viewport::ViewportCommand;
+        self.tray_sync();
+        let drained = crate::tray::drain(&self.tray_channel.rx);
+        if drained.quit {
+            crate::tray::quit_from_tray(&self.app, &self.tray_slot);
+        }
+        if drained.show || drained.toggle {
+            let mut app = self.app.inner.lock();
+            let hidden = app.window_state == WindowState::HiddenToTray;
+            if drained.show || hidden {
+                app.window_state = WindowState::Visible;
+                drop(app);
+                debug!("Tray | showing the window");
+                if !crate::tray::HIDE_BY_CLOSING {
+                    ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                }
+                ctx.send_viewport_cmd(ViewportCommand::Focus);
+            } else {
+                app.window_state = WindowState::HiddenToTray;
+                app.notify_hidden_to_tray();
+                drop(app);
+                debug!("Tray | hiding the window to the tray");
+                // a window can not be hidden on Linux: destroy it, the
+                // background loop re-creates it on the next activation
+                ctx.send_viewport_cmd(if crate::tray::HIDE_BY_CLOSING {
+                    ViewportCommand::Close
+                } else {
+                    ViewportCommand::Visible(false)
+                });
+            }
+            ctx.request_repaint();
+        }
+        self.tray_refresh();
+        // [--tray] on Windows/macOS: hide on the very first frame. The
+        // command is processed right after eframe's forced first show,
+        // within the same event-loop iteration, so the window never
+        // appears. (On Linux no window is created at all: [start_in_tray])
+        let mut app = self.app.inner.lock();
+        if app.window_state == WindowState::StartingInTray && app.tray_active {
+            app.window_state = WindowState::HiddenToTray;
+            drop(app);
+            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let mut app = self.inner.lock();
-        // *-------*
-        // | DEBUG |
-        // *-------*
+        let mut app = self.app.inner.lock();
         if mitigate_wgpu_mem_leak(ui.ctx()) {
             return;
         }

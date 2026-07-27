@@ -47,6 +47,17 @@ pub const APP_DEFAULT_SCALE: f32 = 1.0;
 pub const BYTES_ICON: &[u8] = include_bytes!("../../assets/images/icons/icon@2x.png");
 #[cfg(not(target_os = "macos"))]
 pub const BYTES_ICON: &[u8] = include_bytes!("../../assets/images/icons/icon.png");
+// The tray icon, pre-converted to the raw ARGB32 pixels ksni wants
+// (kept in sync with icon.png by a unit test in tray::ksni_backend)
+#[cfg(target_os = "linux")]
+pub const BYTES_TRAY_ICON_ARGB: &[u8] = include_bytes!("../../assets/images/icons/tray-icon.argb");
+#[cfg(target_os = "linux")]
+pub const TRAY_ICON_SIZE: u32 = 256;
+// macOS menu bar template icon: monochrome (black + alpha), macOS recolors
+// it to match the light/dark bar
+#[cfg(target_os = "macos")]
+pub const BYTES_TRAY_ICON_TEMPLATE: &[u8] =
+    include_bytes!("../../assets/images/icons/tray-template.png");
 pub const BYTES_XVB: &[u8] = include_bytes!("../../assets/images/logos/xvb.png");
 pub const BYTES_XMRIG: &[u8] = include_bytes!("../../assets/images/logos/xmrig.png");
 pub const BYTES_MONERO: &[u8] = include_bytes!("../../assets/images/logos/monero.png");
@@ -325,6 +336,8 @@ pub const GUPAX_SHOULD_RESTART: &str = "A restart is required to apply changes";
 // pub const GUPAX_UPDATE_VIA_TOR:   &str = "WARNING: This option is unstable on macOS. Update through the Tor network. Tor is embedded within Gupax; a Tor system proxy is not required";
 pub const GUPAX_ASK_BEFORE_QUIT: &str = "Ask before quitting Gupax";
 pub const GUPAX_SAVE_BEFORE_QUIT: &str = "Automatically save any changed settings before quitting";
+pub const GUPAX_HIDE_TO_TRAY: &str = "Closing the window hides Gupax to the system tray instead of quitting. Use the tray menu (or left-click the tray icon) to show it again, and the tray's Quit to exit.\nOn Linux with GNOME, an AppIndicator extension is required for the tray icon to be visible.";
+pub const GUPAX_START_WITH_TRAY: &str = "Show the Gupax icon in the system tray at startup. Start Gupax with the --tray argument to start it hidden in the tray.\nOn Linux with GNOME, an AppIndicator extension is required for the tray icon to be visible.";
 pub const GUPAX_AUTO_P2POOL: &str = "Automatically start P2Pool on Gupax startup. If you are using [P2Pool Simple], this will NOT wait for your [Auto-Ping] to finish, it will start P2Pool on the pool you already have selected. This option will fail if your P2Pool settings aren't valid!";
 pub const GUPAX_AUTO_NODE: &str = "Automatically start Node on Gupax startup. This option will fail if your P2Pool settings aren't valid!";
 pub const GUPAX_AUTO_XMRIG: &str = "Automatically start XMRig on Gupax startup. This option will fail if your XMRig settings aren't valid!";

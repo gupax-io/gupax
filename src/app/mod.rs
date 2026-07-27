@@ -93,26 +93,37 @@ pub type BackupNodes = Arc<Mutex<Vec<PoolNode>>>;
 // The state of the outer main [App].
 // See the [State] struct in [state.rs] for the
 // actual inner state of the tab settings.
+/// Cheap-to-clone, `Send` handle to the whole [`App`], shared with other
+/// threads. The GUI drives it through `GuiApp` in [`eframe_impl`], which
+/// additionally owns the main-thread-only pieces (the tray icon).
 #[derive(Clone)]
 pub struct AppEgui {
     pub inner: Arc<egui::mutex::Mutex<App>>,
 }
 #[allow(unused)]
+/// Lifecycle of the main window relative to the system tray.
+/// Illegal combinations (e.g. hidden while starting) are unrepresentable.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum WindowState {
+    /// A normal, visible window.
+    #[default]
+    Visible,
+    /// [--tray]: the first window must be hidden as soon as the tray is up
+    /// (on Linux it is closed right away instead).
+    StartingInTray,
+    /// Hidden to the tray; on Linux no window exists at all.
+    HiddenToTray,
+}
+
 pub struct App {
     // Misc state
     pub tab: Tab,   // What tab are we on?
     pub size: Vec2, // Top-level width and Top-level height
-    // Alpha (transparency)
-    // This value is used to incrementally increase/decrease
-    // the transparency when resizing. Basically, it fades
-    // in/out of black to hide jitter when resizing with [init_text_styles()]
-    pub alpha: u8,
     // This is a one time trigger so [init_text_styles()] isn't
     // called 60x a second when resizing the window. Instead,
     // it only gets called if this bool is true and the user
     // is hovering over egui (ctx.is_pointer_over_area()).
     pub must_resize: bool, // Sets the flag so we know to [init_text_styles()]
-    pub resizing: bool,    // Are we in the process of resizing? (For black fade in/out)
     // State
     pub og: Arc<Mutex<State>>, // og = Old state to compare against
     pub state: State,          // state = Working state (current settings)
@@ -162,6 +173,9 @@ pub struct App {
     pub xmrig_proxy_stdin: String, // The buffer between the xmrig-proxy console and the [Helper]
     // State from [--flags]
     pub no_startup: bool,
+    pub start_in_tray_flag: bool, // [--tray] was passed
+    pub tray_active: bool,        // A tray icon exists, hide-to-tray is safe
+    pub window_state: WindowState,
     // Gupax-P2Pool API
     // Gupax's P2Pool API (e.g: ~/.local/share/gupax/p2pool/)
     // This is a file-based API that contains data for permanent stats.
@@ -413,9 +427,10 @@ impl App {
             p2pool_stdin: String::with_capacity(10),
             xmrig_stdin: String::with_capacity(10),
             xmrig_proxy_stdin: String::with_capacity(10),
-            resizing: false,
-            alpha: 0,
             no_startup: false,
+            start_in_tray_flag: false,
+            tray_active: false,
+            window_state: WindowState::default(),
             gupax_p2pool_api: arc_mut!(GupaxP2poolApi::new()),
             pub_sys,
             benchmarks,

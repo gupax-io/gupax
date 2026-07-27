@@ -1,20 +1,15 @@
-use std::{io, process::exit, thread::sleep, time::Duration};
+use std::{io, thread::sleep, time::Duration};
 
 use crate::{
     app::{App, AppEgui},
-    helper::{Helper, xvb::nodes::Pool},
+    helper::xvb::nodes::Pool,
 };
 
 pub fn start_daemon(app: AppEgui) {
     // if the app receives Ctrl+C, make sure to terminate all services
     let app_ctrlc = app.clone();
     ctrlc::set_handler(move || {
-        Helper::stop_xvb(&app_ctrlc.inner.lock().helper);
-        Helper::stop_xmrig(&app_ctrlc.inner.lock().helper);
-        Helper::stop_xp(&app_ctrlc.inner.lock().helper);
-        Helper::stop_p2pool(&app_ctrlc.inner.lock().helper);
-        Helper::stop_node(&app_ctrlc.inner.lock().helper);
-        exit(0);
+        app_ctrlc.inner.lock().graceful_shutdown();
     })
     .expect("Error setting Ctrl-C handler");
     loop {

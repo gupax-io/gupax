@@ -236,6 +236,12 @@ pub struct Gupax {
     pub theme: GupaxTheme,
     pub renderer_use_glow: bool,
     pub updates: UpdateSettings,
+    // The one-time close-button question was answered
+    #[serde(default)]
+    pub asked_close_to_tray: bool,
+    // The one-time "still running in the tray" notification was shown
+    #[serde(default)]
+    pub notified_hidden_to_tray: bool,
 }
 
 impl Gupax {
@@ -402,6 +408,10 @@ pub struct AutoEnabled {
     pub crawl: bool,
     pub ask_before_quit: bool,
     pub save_before_quit: bool,
+    #[serde(default)]
+    pub hide_to_tray: bool,
+    #[serde(default = "default_true")]
+    pub start_with_tray: bool,
     pub processes: Vec<ProcessName>,
 }
 impl AutoEnabled {
@@ -411,6 +421,8 @@ impl AutoEnabled {
             AutoStart::Crawl => self.crawl = enable,
             AutoStart::AskBeforeQuit => self.ask_before_quit = enable,
             AutoStart::SaveBeforequit => self.save_before_quit = enable,
+            AutoStart::HideToTray => self.hide_to_tray = enable,
+            AutoStart::StartWithTray => self.start_with_tray = enable,
             AutoStart::Process(p) => {
                 let processes = &mut self.processes;
                 if !processes.iter().any(|a| a == p) && enable {
@@ -429,6 +441,8 @@ impl AutoEnabled {
             AutoStart::Crawl => self.crawl,
             AutoStart::AskBeforeQuit => self.ask_before_quit,
             AutoStart::SaveBeforequit => self.save_before_quit,
+            AutoStart::HideToTray => self.hide_to_tray,
+            AutoStart::StartWithTray => self.start_with_tray,
             AutoStart::Process(p) => self.processes.iter().any(|a| a == p),
         }
     }
@@ -443,6 +457,10 @@ pub enum AutoStart {
     AskBeforeQuit,
     #[strum(to_string = "Save on exit")]
     SaveBeforequit,
+    #[strum(to_string = "Close to tray")]
+    HideToTray,
+    #[strum(to_string = "Start with Tray")]
+    StartWithTray,
     #[strum(to_string = "Auto-{0}")]
     Process(ProcessName),
 }
@@ -453,6 +471,8 @@ impl AutoStart {
             AutoStart::Crawl => GUPAX_AUTO_CRAWL,
             AutoStart::AskBeforeQuit => GUPAX_ASK_BEFORE_QUIT,
             AutoStart::SaveBeforequit => GUPAX_SAVE_BEFORE_QUIT,
+            AutoStart::HideToTray => GUPAX_HIDE_TO_TRAY,
+            AutoStart::StartWithTray => GUPAX_START_WITH_TRAY,
             AutoStart::Process(p) => p.msg_auto_help(),
         }
     }
@@ -468,6 +488,8 @@ impl AutoStart {
         AutoStart::Process(ProcessName::Xvb),
         AutoStart::AskBeforeQuit,
         AutoStart::SaveBeforequit,
+        AutoStart::HideToTray,
+        AutoStart::StartWithTray,
     ];
     // non const:
     // let mut autos = AutoStart::iter().collect::<Vec<_>>();
@@ -692,6 +714,10 @@ pub struct Version {
 }
 
 //---------------------------------------------------------------------------------------------------- [State] Defaults
+fn default_true() -> bool {
+    true
+}
+
 impl Default for AutoEnabled {
     fn default() -> Self {
         Self {
@@ -699,6 +725,8 @@ impl Default for AutoEnabled {
             crawl: true,
             ask_before_quit: true,
             save_before_quit: true,
+            hide_to_tray: false,
+            start_with_tray: true,
             processes: Vec::new(),
         }
     }
@@ -740,6 +768,8 @@ impl Default for Gupax {
             theme: GupaxTheme::default(),
             renderer_use_glow: false,
             updates: UpdateSettings::default(),
+            asked_close_to_tray: false,
+            notified_hidden_to_tray: false,
         }
     }
 }
