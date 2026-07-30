@@ -21,6 +21,9 @@
 //! GNOME needs an AppIndicator extension for the icon to be visible;
 //! KDE and most other DEs work out of the box.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use ksni::blocking::{Handle, TrayMethods};
 
 use super::{TrayCmd, TraySender};
@@ -28,18 +31,43 @@ use crate::utils::constants::{BYTES_TRAY_ICON_ARGB, TRAY_ICON_SIZE};
 
 pub struct TrayBackend {
     handle: Handle<GupaxTray>,
+    watcher_present: Arc<AtomicBool>,
 }
 
 impl TrayBackend {
     pub fn new(sender: TraySender) -> anyhow::Result<Self> {
+        let watcher_present = Arc::new(AtomicBool::new(true));
         let tray = GupaxTray {
             sender,
             window_visible: true,
+            watcher_present: watcher_present.clone(),
         };
+        // Register even when no StatusNotifierWatcher is on the bus yet,
+        // and let ksni attach once one shows up: without this a missing
+        // watcher is a hard error, which is the normal case when Gupax is
+        // autostarted at login and beats the desktop's tray to the bus --
+        // and [`crate::app::eframe_impl::GuiApp`] never retries, so the
+        // icon would stay missing for the rest of the session.
+        //
+        // The cost is that registering no longer proves the icon can be
+        // seen by anyone, so [`Self::icon_visible`] answers that instead.
         let handle = tray
+            .assume_sni_available(true)
             .spawn()
             .map_err(|e| anyhow::anyhow!("could not register StatusNotifierItem: {e}"))?;
-        Ok(Self { handle })
+        Ok(Self {
+            handle,
+            watcher_present,
+        })
+    }
+
+    /// Whether anything is drawing the icon right now.
+    ///
+    /// Sound to read straight after [`Self::new`]: the blocking `spawn`
+    /// runs the whole registration, [`ksni::Tray::watcher_offline`]
+    /// included, before it returns.
+    pub fn icon_visible(&self) -> bool {
+        self.watcher_present.load(Ordering::Relaxed)
     }
 
     pub fn set_window_visible(&self, visible: bool) {
@@ -58,11 +86,31 @@ impl Drop for TrayBackend {
 struct GupaxTray {
     sender: TraySender,
     window_visible: bool,
+    /// Shared with [`TrayBackend::icon_visible`]; written from ksni's
+    /// thread, read from the GUI thread.
+    watcher_present: Arc<AtomicBool>,
 }
 
 impl ksni::Tray for GupaxTray {
     fn id(&self) -> String {
         "io.gupax.Gupax".into()
+    }
+    /// No watcher means no icon anywhere, and hiding the window destroys
+    /// it on Linux, so Gupax would end up somewhere the user can not
+    /// reach it. Everything that hides keys off
+    /// [`crate::app::App::tray_active`], which follows this.
+    ///
+    /// Returns `true` to keep the service running regardless: a watcher
+    /// that went away can come back (a shell restart, or the user enabling
+    /// the tray extension), and ksni re-registers the item when it does.
+    fn watcher_offline(&self, reason: ksni::OfflineReason) -> bool {
+        log::warn!("Tray | no StatusNotifierWatcher, the icon is not displayed: {reason:?}");
+        self.watcher_present.store(false, Ordering::Relaxed);
+        true
+    }
+    fn watcher_online(&self) {
+        log::info!("Tray | a StatusNotifierWatcher is back, the icon is displayed again");
+        self.watcher_present.store(true, Ordering::Relaxed);
     }
     fn title(&self) -> String {
         "Gupax".into()
@@ -122,9 +170,8 @@ mod test {
     /// RGBA8 and rotate each pixel right by one byte, as done below).
     #[test]
     fn argb_file_matches_source_icon() {
-        let icon = image::load_from_memory(BYTES_ICON).unwrap().to_rgba8();
-        assert_eq!(icon.dimensions(), (TRAY_ICON_SIZE, TRAY_ICON_SIZE));
-        let mut data = icon.into_raw();
+        let (mut data, width, height) = crate::miscs::icon_rgba(BYTES_ICON);
+        assert_eq!((width, height), (TRAY_ICON_SIZE, TRAY_ICON_SIZE));
         for pixel in data.chunks_exact_mut(4) {
             pixel.rotate_right(1);
         }

@@ -20,6 +20,7 @@ use env_logger::fmt::style::Style;
 use env_logger::{Builder, WriteStyle};
 use flexi_logger::{FileSpec, Logger};
 use log::LevelFilter;
+use once_cell::sync::Lazy;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -98,6 +99,17 @@ pub fn init_logger(now: Instant, logfile: bool) {
     info!("init_logger() ... OK");
 }
 
+/// Decoded once and shared: `init_options` runs again for every window
+/// re-created from the tray, and the pixels never change.
+static ICON: Lazy<Arc<egui::viewport::IconData>> = Lazy::new(|| {
+    let (rgba, width, height) = crate::miscs::icon_rgba(BYTES_ICON);
+    Arc::new(egui::viewport::IconData {
+        rgba,
+        width,
+        height,
+    })
+});
+
 #[cold]
 #[inline(never)]
 pub fn init_options(initial_window_size: Option<Vec2>) -> NativeOptions {
@@ -105,15 +117,7 @@ pub fn init_options(initial_window_size: Option<Vec2>) -> NativeOptions {
     options.viewport.min_inner_size = Some(Vec2::new(APP_MIN_WIDTH, APP_MIN_HEIGHT));
     options.viewport.max_inner_size = Some(Vec2::new(APP_MAX_WIDTH, APP_MAX_HEIGHT));
     options.viewport.inner_size = initial_window_size;
-    let icon = image::load_from_memory(BYTES_ICON)
-        .expect("Failed to read icon bytes")
-        .to_rgba8();
-    let (icon_width, icon_height) = icon.dimensions();
-    options.viewport.icon = Some(Arc::new(egui::viewport::IconData {
-        rgba: icon.into_raw(),
-        width: icon_width,
-        height: icon_height,
-    }));
+    options.viewport.icon = Some(ICON.clone());
     info!("init_options() ... OK");
     options
 }

@@ -138,6 +138,16 @@ pub fn print_gupax_p2pool_api(gupax_p2pool_api: &Arc<Mutex<GupaxP2poolApi>>) {
     exit(0);
 }
 
+/// Decode one of the embedded PNG icons into the raw RGBA pixels that
+/// both eframe's viewport icon and the tray backends want.
+pub fn icon_rgba(bytes: &[u8]) -> (Vec<u8>, u32, u32) {
+    let icon = image::load_from_memory(bytes)
+        .expect("Failed to read icon bytes")
+        .to_rgba8();
+    let (width, height) = icon.dimensions();
+    (icon.into_raw(), width, height)
+}
+
 #[inline]
 pub fn cmp_f64(a: f64, b: f64) -> std::cmp::Ordering {
     match (a <= b, a >= b) {

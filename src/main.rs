@@ -110,9 +110,16 @@ fn main() {
     // A second GUI launch shows the window of the running instance
     // instead of starting a duplicate (and its auto-started services).
     if !args.daemon {
-        let name_version = app.inner.lock().name_version.clone();
-        if !single_instance::init(tray_channel.sender(), &name_version) {
-            info!("Gupax is already running: told it to show its window, exiting");
+        let (name_version, data_dir) = {
+            let app = app.inner.lock();
+            (app.name_version.clone(), app.os_data_path.clone())
+        };
+        if !single_instance::init(tray_channel.sender(), &name_version, &data_dir, !args.tray) {
+            if args.tray {
+                info!("Gupax is already running, exiting");
+            } else {
+                info!("Gupax is already running: told it to show its window, exiting");
+            }
             return;
         }
     }

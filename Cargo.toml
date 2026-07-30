@@ -122,6 +122,18 @@ eframe = {git="https://github.com/emilk/egui", features=["x11", "wayland", "glow
 # macOS
 [target.'cfg(target_os = "macos")'.dependencies]
 nix = { version = "0.31", features = ["fs"] }
+## activation-policy handling, see src/tray/macos.rs
+## (winit must match the version eframe links)
+winit = "0.30"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  ## NSApplication itself is gated on NSResponder, and the activation
+  ## policy getter/setter on NSRunningApplication
+  "NSResponder",
+  "NSApplication",
+  "NSRunningApplication",
+] }
 [dev-dependencies]
 # egui = {version="0.33", features=["callstack"]}
 egui = {git="https://github.com/emilk/egui", rev="f32727d", features=["callstack"]}

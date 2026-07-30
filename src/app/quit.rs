@@ -23,7 +23,7 @@ use log::{error, info};
 
 use crate::errors::ErrorButtons;
 use crate::errors::ErrorFerris;
-use crate::helper::{Helper, Process};
+use crate::helper::{Helper, Process, ProcessName};
 
 use super::{App, WindowState};
 
@@ -146,11 +146,7 @@ impl App {
         if self.state.gupax.notified_hidden_to_tray {
             return;
         }
-        self.state.gupax.notified_hidden_to_tray = true;
-        match crate::disk::state::State::save(&mut self.state, &self.state_path) {
-            Ok(_) => self.og.lock().unwrap().gupax = self.state.gupax.clone(),
-            Err(e) => error!("State file: {e}"),
-        }
+        self.persist_gupax_flag(|gupax| gupax.notified_hidden_to_tray = true);
         std::thread::spawn(|| {
             crate::helper::notification::notif(
                 "Gupax keeps running in the system tray.\nUse the tray icon to open it again or to quit.",
@@ -160,10 +156,31 @@ impl App {
 
     /// Persist the answer of the one-time close-to-tray question.
     pub fn save_tray_on_close_answer(&mut self, enable: bool) {
-        self.state.gupax.auto.hide_to_tray = enable;
-        self.state.gupax.asked_close_to_tray = true;
-        match crate::disk::state::State::save(&mut self.state, &self.state_path) {
-            Ok(_) => self.og.lock().unwrap().gupax = self.state.gupax.clone(),
+        self.persist_gupax_flag(|gupax| {
+            gupax.auto.hide_to_tray = enable;
+            gupax.asked_close_to_tray = true;
+        });
+    }
+
+    /// Write a setting Gupax decided by itself, and nothing else.
+    ///
+    /// [`crate::disk::state::State::save`] serializes the whole file, so it
+    /// can not be handed the working state: that would commit every tab's
+    /// unsaved edits behind the user's back, and override their "save
+    /// before quit" choice. What belongs on disk is the last saved state
+    /// ([`App::og`]) plus this one change.
+    ///
+    /// Keeping `og` equal to what was written is the other half: it is what
+    /// [`App::diff`] compares against, so an unrelated edit still shows as
+    /// unsaved, and [Reset] -- which copies `og` back over the working
+    /// state without touching the file -- still has the truth to go back
+    /// to.
+    fn persist_gupax_flag(&mut self, set: impl Fn(&mut crate::disk::state::Gupax)) {
+        set(&mut self.state.gupax);
+        let mut on_disk = self.og.lock().unwrap().clone();
+        set(&mut on_disk.gupax);
+        match crate::disk::state::State::save(&mut on_disk, &self.state_path) {
+            Ok(_) => self.og.lock().unwrap().gupax = on_disk.gupax,
             Err(e) => error!("State file: {e}"),
         }
     }
@@ -172,21 +189,18 @@ impl App {
     /// save the state if enabled, and exit the program.
     pub fn graceful_shutdown(&mut self) -> ! {
         info!("Shutdown | stopping all child processes...");
-        type StopFn = fn(&Arc<Mutex<Helper>>);
-        let processes: [(&Arc<Mutex<Process>>, StopFn); 5] = [
-            (&self.node, Helper::stop_node),
-            (&self.p2pool, Helper::stop_p2pool),
-            (&self.xmrig, Helper::stop_xmrig),
-            (&self.xmrig_proxy, Helper::stop_xp),
-            (&self.xvb, Helper::stop_xvb),
-        ];
-        for (process, stop) in &processes {
+        for name in SHUTDOWN_ORDER {
+            let (process, stop) = self.stoppable(name);
             if process.lock().unwrap().is_alive() {
                 stop(&self.helper);
             }
         }
+        // One deadline for all of them, and the waits are sequential, so
+        // this loop has to keep [SHUTDOWN_ORDER] too: whatever is slowest
+        // to exit must not be able to eat the budget of the rest.
         let deadline = Instant::now() + Duration::from_secs(30);
-        for (process, _) in &processes {
+        for name in SHUTDOWN_ORDER {
+            let (process, _) = self.stoppable(name);
             while process.lock().unwrap().is_alive() && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(100));
             }
@@ -197,11 +211,70 @@ impl App {
         info!("Shutdown | goodbye!");
         exit(0);
     }
+
+    fn stoppable(&self, name: ProcessName) -> (&Arc<Mutex<Process>>, StopFn) {
+        match name {
+            ProcessName::Node => (&self.node, Helper::stop_node),
+            ProcessName::P2pool => (&self.p2pool, Helper::stop_p2pool),
+            ProcessName::Xmrig => (&self.xmrig, Helper::stop_xmrig),
+            ProcessName::XmrigProxy => (&self.xmrig_proxy, Helper::stop_xp),
+            ProcessName::Xvb => (&self.xvb, Helper::stop_xvb),
+        }
+    }
 }
+
+type StopFn = fn(&Arc<Mutex<Helper>>);
+
+/// The order [`App::graceful_shutdown`] stops processes in: every process
+/// before the one it feeds into, so nothing is left mining to — or
+/// re-pointing XMRig at — a service that is already gone. monerod is both
+/// the deepest dependency and the slowest to exit (it flushes LMDB), so
+/// last is right for it twice over.
+const SHUTDOWN_ORDER: [ProcessName; 5] = [
+    ProcessName::Xvb,
+    ProcessName::Xmrig,
+    ProcessName::XmrigProxy,
+    ProcessName::P2pool,
+    ProcessName::Node,
+];
 
 #[cfg(test)]
 mod test {
-    use super::{CloseAction, CloseContext, close_action};
+    use super::{CloseAction, CloseContext, SHUTDOWN_ORDER, close_action};
+    use crate::helper::ProcessName;
+
+    /// A process must be stopped before whatever it feeds into, or it
+    /// keeps working against a service that is already gone.
+    #[test]
+    fn shutdown_stops_dependents_first() {
+        let at = |p: ProcessName| SHUTDOWN_ORDER.iter().position(|q| *q == p).unwrap();
+        assert!(
+            at(ProcessName::Xvb) < at(ProcessName::Xmrig),
+            "XvB re-points XMRig's pool"
+        );
+        assert!(
+            at(ProcessName::Xmrig) < at(ProcessName::P2pool),
+            "XMRig mines to P2Pool"
+        );
+        assert!(
+            at(ProcessName::XmrigProxy) < at(ProcessName::P2pool),
+            "the proxy forwards to P2Pool"
+        );
+        assert!(
+            at(ProcessName::P2pool) < at(ProcessName::Node),
+            "P2Pool talks to the node"
+        );
+    }
+
+    /// Missing one would silently leave a miner running after a quit.
+    #[test]
+    fn shutdown_covers_every_process() {
+        use strum::IntoEnumIterator as _;
+        for name in ProcessName::iter() {
+            assert!(SHUTDOWN_ORDER.contains(&name), "{name:?} is never stopped");
+        }
+        assert_eq!(SHUTDOWN_ORDER.len(), ProcessName::iter().count());
+    }
 
     /// Tray disabled, nothing asked yet: the base case of each test.
     fn base() -> CloseContext {

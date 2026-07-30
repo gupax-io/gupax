@@ -266,7 +266,19 @@ impl crate::app::App {
                             .clicked()
                         {
                             self.save_tray_on_close_answer(false);
-                            self.graceful_shutdown();
+                            // "No" is still a quit, and this question got
+                            // in front of the confirmation that would
+                            // normally have asked: hand it over rather
+                            // than skip it, it is the only warning that an
+                            // update is in progress and that quitting now
+                            // can corrupt a half-written binary.
+                            if self.state.gupax.auto.ask_before_quit {
+                                self.error_state
+                                    .set("", ErrorFerris::Oops, ErrorButtons::StayQuit);
+                                self.error_state.quit_twice = true;
+                            } else {
+                                self.graceful_shutdown();
+                            }
                         }
                         if key.is_esc() {
                             self.error_state.reset();

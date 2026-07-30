@@ -30,6 +30,10 @@ pub struct GuiApp {
     /// Tray creation failed: don't retry every frame, and never hide the
     /// window (the app would become unreachable).
     tray_failed: bool,
+    /// Windows: a frame has seen the window really unmapped, so finding it
+    /// mapped again means something outside Gupax did it.
+    #[cfg(target_os = "windows")]
+    window_seen_hidden: bool,
 }
 
 impl GuiApp {
@@ -58,13 +62,22 @@ impl GuiApp {
             tray_slot,
             tray_channel,
             tray_failed: false,
+            #[cfg(target_os = "windows")]
+            window_seen_hidden: false,
         }
     }
 
     /// Create or remove the tray icon depending on the current settings.
     fn tray_sync(&mut self) {
         let wants_tray = {
-            let app = self.app.inner.lock();
+            let mut app = self.app.inner.lock();
+            // [--tray] forces a tray only for as long as it is the reason
+            // the window is hidden. Once the user has the window back the
+            // settings decide again, so unchecking both can remove the
+            // icon instead of the flag pinning it for the whole session.
+            if app.window_state == WindowState::Visible {
+                app.start_in_tray_flag = false;
+            }
             app.state.gupax.auto.hide_to_tray
                 || app.state.gupax.auto.start_with_tray
                 || app.start_in_tray_flag
@@ -72,32 +85,80 @@ impl GuiApp {
         let mut slot = self.tray_slot.lock();
         if wants_tray && slot.is_none() && !self.tray_failed {
             match crate::tray::TrayManager::new(self.tray_channel.sender()) {
-                Ok(tray) => {
-                    *slot = Some(tray);
-                    self.app.inner.lock().tray_active = true;
-                }
+                Ok(tray) => *slot = Some(tray),
                 Err(e) => {
                     warn!("Tray | creation failed, tray features are disabled: {e}");
                     self.tray_failed = true;
-                    let mut app = self.app.inner.lock();
-                    // abandon a pending [--tray] hiding, it needs a tray
-                    if app.window_state == WindowState::StartingInTray {
-                        app.window_state = WindowState::Visible;
-                    }
                 }
             }
         } else if !wants_tray && slot.is_some() {
             *slot = None;
-            self.app.inner.lock().tray_active = false;
+        }
+        // Reconciled every frame instead of on creation: on Linux the icon
+        // is drawn by the desktop's StatusNotifier host, which can come
+        // and go while Gupax runs, so having created a tray icon does not
+        // mean there is one to see. Everything that hides the window keys
+        // off `tray_active`, and a tray nobody draws must not read as one
+        // that is there -- Gupax would hide itself out of reach.
+        let displayed = slot.as_ref().is_some_and(|tray| tray.icon_visible());
+        let mut app = self.app.inner.lock();
+        app.tray_active = displayed;
+        // abandon a pending [--tray] hiding, it needs an icon to hide into
+        if !displayed && app.window_state == WindowState::StartingInTray {
+            app.window_state = WindowState::Visible;
         }
     }
 
-    /// Keep the tray's Show/Hide menu entry in sync with the window state
-    /// (deduplicated inside [`crate::tray::TrayManager`]).
+    /// Keep the tray's Show/Hide menu entry, and whether Gupax is a
+    /// windowed app at all, in sync with the window state (both
+    /// deduplicated by the callee).
     fn tray_refresh(&self) {
         let visible = self.app.inner.lock().window_state == WindowState::Visible;
-        if let Some(tray) = self.tray_slot.lock().as_ref() {
+        let slot = self.tray_slot.lock();
+        // Sitting in the tray means background app. Never without a tray
+        // icon though, or the only way left to reach Gupax would be to
+        // launch it again.
+        crate::tray::set_windowed_app(visible || slot.is_none());
+        if let Some(tray) = slot.as_ref() {
             tray.set_window_visible(visible);
+        }
+    }
+
+    /// Take the window back when something outside Gupax un-hid it.
+    ///
+    /// Windows has no channel between launches: a second `gupax.exe` finds
+    /// the running window by title and maps it with `ShowWindow` itself
+    /// ([`crate::utils::single_instance`]), so no [`crate::tray::TrayCmd`]
+    /// is ever queued and nothing else would leave
+    /// [`WindowState::HiddenToTray`] -- leaving the user a window that
+    /// paints nothing, since [`Self::ui`] returns early while hidden.
+    ///
+    /// The latch is what keeps this from re-showing the window Gupax is
+    /// itself in the middle of hiding: `ViewportCommand::Visible(false)` is
+    /// only applied after the frame that sends it, so the window is still
+    /// mapped for one frame while the state already says hidden.
+    #[cfg(target_os = "windows")]
+    fn resync_native_visibility(&mut self, ctx: &egui::Context) {
+        use std::sync::atomic::Ordering;
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+        let hwnd = crate::tray::MAIN_WINDOW_HWND.load(Ordering::Relaxed);
+        if hwnd == 0 {
+            return;
+        }
+        if self.app.inner.lock().window_state != WindowState::HiddenToTray {
+            self.window_seen_hidden = false;
+            return;
+        }
+        let mapped = unsafe { IsWindowVisible(HWND(hwnd as *mut core::ffi::c_void)).as_bool() };
+        if !mapped {
+            self.window_seen_hidden = true;
+        } else if self.window_seen_hidden {
+            info!("Tray | the window was shown from outside Gupax, taking it back");
+            self.window_seen_hidden = false;
+            self.app.inner.lock().window_state = WindowState::Visible;
+            ctx.send_viewport_cmd(egui::viewport::ViewportCommand::Focus);
+            ctx.request_repaint();
         }
     }
 }
@@ -118,11 +179,24 @@ pub fn start_in_tray(
     }
     match crate::tray::TrayManager::new(tray_channel.sender()) {
         Ok(tray) => {
+            // Registering an icon does not mean anything displays it, and
+            // this is the one path [`GuiApp::tray_sync`] can not correct
+            // later: it starts with no window at all, so an icon nobody
+            // draws would leave nothing to click and no window to come
+            // back to. Keep the icon either way -- a StatusNotifier host
+            // can still show up, and the reconcile in `tray_sync` picks
+            // that up -- but start with a window.
+            let displayed = tray.icon_visible();
             *tray_slot.lock() = Some(tray);
             let mut app = app.inner.lock();
-            app.tray_active = true;
-            app.window_state = WindowState::HiddenToTray;
-            false
+            app.tray_active = displayed;
+            app.window_state = if displayed {
+                WindowState::HiddenToTray
+            } else {
+                warn!("Tray | the tray icon is not displayed, starting with a window");
+                WindowState::Visible
+            };
+            !displayed
         }
         Err(e) => {
             warn!("Tray | creation failed, starting with a window: {e}");
@@ -193,15 +267,23 @@ pub fn run_gui(
     resolution: egui::Vec2,
     name_version: &str,
 ) {
-    let mut options = crate::inits::init_options(initial_window_size);
-    options.renderer = app.inner.lock().current_renderer();
-    info!(
-        "starting Gupax with renderer: {}",
-        app.inner.lock().current_renderer()
-    );
+    let starting_in_tray = app.inner.lock().window_state == WindowState::StartingInTray;
+    // Built fresh per run rather than cloned: `NativeOptions::clone`
+    // deliberately drops builder hooks, and the icon behind
+    // [`crate::inits::init_options`] is decoded once and shared.
+    let options = |renderer| {
+        let mut options = crate::inits::init_options(initial_window_size);
+        options.renderer = renderer;
+        if starting_in_tray {
+            crate::tray::start_as_background_app(&mut options);
+        }
+        options
+    };
+    let renderer = app.inner.lock().current_renderer();
+    info!("starting Gupax with renderer: {renderer}");
     if let Err(e) = eframe::run_native(
         name_version,
-        options.clone(),
+        options(renderer),
         app_creator(app, tray_slot, tray_channel, resolution),
     ) {
         let mut guard = app.inner.lock();
@@ -213,15 +295,12 @@ pub fn run_gui(
             "Use the other renderer temporarily, the new renderer will be used at next startup if the settings are saved"
         );
         guard.state.gupax.renderer_use_glow = !guard.state.gupax.renderer_use_glow;
-        options.renderer = guard.current_renderer();
-        warn!(
-            "Restarting with Gupax with renderer {}",
-            guard.current_renderer()
-        );
+        let renderer = guard.current_renderer();
+        warn!("Restarting with Gupax with renderer {renderer}");
         drop(guard);
         if let Err(e) = eframe::run_native(
             name_version,
-            options,
+            options(renderer),
             app_creator(app, tray_slot, tray_channel, resolution),
         ) {
             error!(
@@ -268,7 +347,11 @@ impl eframe::App for GuiApp {
         if drained.show || drained.toggle {
             let mut app = self.app.inner.lock();
             let hidden = app.window_state == WindowState::HiddenToTray;
-            if drained.show || hidden {
+            // A toggle with no icon left can only show: hiding would put
+            // Gupax where nothing can reach it. [tray_sync] has already
+            // reconciled `tray_active` for this frame, so an icon that
+            // stopped being displayed counts here too.
+            if drained.show || hidden || !app.tray_active {
                 app.window_state = WindowState::Visible;
                 drop(app);
                 debug!("Tray | showing the window");
@@ -291,6 +374,21 @@ impl eframe::App for GuiApp {
             }
             ctx.request_repaint();
         }
+        #[cfg(target_os = "windows")]
+        self.resync_native_visibility(ctx);
+        // Routed from here rather than from [ui], which eframe skips
+        // whenever the viewport is not `visible()` -- minimized, or
+        // occluded on macOS. A close request arriving on such a frame
+        // would go unanswered, and eframe takes that for consent: the root
+        // viewport closes, skipping hide-to-tray, the quit confirmation
+        // and save-on-exit alike, and leaving the child processes behind.
+        // [App::quit] returns right away unless a close was requested, so
+        // calling it every frame costs nothing.
+        //
+        // Before [tray_refresh] so that a close which hides to the tray
+        // gets its menu entry and activation policy updated in the same
+        // frame, like the hide above.
+        self.app.inner.lock().quit(ctx);
         self.tray_refresh();
         // [--tray] on Windows/macOS: hide on the very first frame. The
         // command is processed right after eframe's forced first show,
@@ -309,9 +407,21 @@ impl eframe::App for GuiApp {
         if mitigate_wgpu_mem_leak(ui.ctx()) {
             return;
         }
+        // Nothing is on screen while hidden to the tray. Returning also
+        // skips the once-a-second `request_repaint_after` below, which is
+        // what was keeping the frame loop running for an invisible
+        // window. [logic] still runs every frame and a tray command still
+        // wakes the loop through `Context::request_repaint`.
+        //
+        // eframe can not skip [ui] on its own: it gates it on
+        // `ViewportInfo::visible()`, which is derived from minimized and
+        // occluded only and so never reflects `ViewportCommand::Visible`.
+        // An unmapped window raises no occlusion event on macOS, and
+        // winit does not emit one on Windows at all.
+        if app.window_state == WindowState::HiddenToTray {
+            return;
+        }
         debug!("App | ----------- Start of [update()] -----------");
-        // If closing
-        app.quit(ui.ctx());
         // Handle Keys
         let (key, wants_input) = app.keys_handle(ui.ctx());
 

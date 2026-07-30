@@ -40,6 +40,8 @@ use crate::app::AppEgui;
 
 #[cfg(target_os = "linux")]
 mod ksni_backend;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod tray_icon_backend;
 
@@ -87,7 +89,7 @@ impl TraySender {
     pub fn send(&self, cmd: TrayCmd) {
         let _ = self.tx.send(cmd);
         #[cfg(target_os = "windows")]
-        show_window_win32();
+        show_window_win32(cmd);
         if let Some(ctx) = self.ctx.lock().as_ref() {
             ctx.request_repaint();
         }
@@ -177,6 +179,15 @@ impl TrayManager {
         })
     }
 
+    /// Whether the icon is actually displayed. Creating one can succeed
+    /// without that being true on Linux, where the icon is drawn by the
+    /// desktop's StatusNotifier host rather than by Gupax, and there may
+    /// not be one. Reconciled every frame, as it can change either way
+    /// while Gupax runs.
+    pub fn icon_visible(&self) -> bool {
+        self.backend.icon_visible()
+    }
+
     /// Adapt the Show/Hide menu entry to the window state.
     pub fn set_window_visible(&self, visible: bool) {
         let mut cached = self.window_visible.lock();
@@ -196,23 +207,76 @@ pub fn quit_from_tray(app: &AppEgui, tray_slot: &TraySlot) -> ! {
     app.inner.lock().graceful_shutdown()
 }
 
+/// [--tray]: launch straight into the background, with no window mapped
+/// and no Dock/taskbar entry. [`set_windowed_app`] and the first frame's
+/// hiding can only act once a frame has run, which is late enough for a
+/// window and a Dock icon to appear and disappear again.
+///
+/// Only macOS: winit dispatches `RedrawRequested` from its own queue
+/// there, so the first frame still runs and still creates the tray. A
+/// hidden Windows window gets no `WM_PAINT`, so the frame might never run
+/// and the tray would never be created — which is what
+/// [`show_window_win32`] works around. Linux never gets here: it creates
+/// no window at all ([`HIDE_BY_CLOSING`]).
+///
+/// The activation policy half only affects the first
+/// `eframe::run_native` of the process, as the winit event loop is built
+/// once and then reused.
+pub fn start_as_background_app(options: &mut eframe::NativeOptions) {
+    #[cfg(target_os = "macos")]
+    macos::start_as_background_app(options);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = options;
+    }
+}
+
+/// Present Gupax as a normal windowed app, or as a background app with no
+/// Dock/taskbar entry that can not become the frontmost application.
+///
+/// Only macOS needs this: hiding the window is enough to leave the
+/// taskbar on Windows, and to leave it on Linux the window is destroyed.
+pub fn set_windowed_app(windowed: bool) {
+    #[cfg(target_os = "macos")]
+    macos::set_windowed_app(windowed);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = windowed;
+    }
+}
+
 /// Windows: force-show the window natively so the frame loop resumes even
 /// if the repaint request is swallowed for a hidden window. The real
 /// visibility state is reconciled in `logic()` right after.
+///
+/// A hidden window is not merely unpainted: it gets no `WM_PAINT`, so
+/// eframe runs no frame at all and nothing would consume the command --
+/// including [`TrayCmd::Quit`], which has to be handled by the main thread
+/// because it is the only one that may drop the tray icon. Mapping the
+/// window is what makes the tray menu work while hidden, so it happens for
+/// every command; only how it is mapped depends on which one.
 #[cfg(target_os = "windows")]
-fn show_window_win32() {
+fn show_window_win32(cmd: TrayCmd) {
     use std::sync::atomic::Ordering;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        IsWindowVisible, SW_SHOW, SetForegroundWindow, ShowWindow,
+        IsWindowVisible, SW_SHOW, SW_SHOWNOACTIVATE, SetForegroundWindow, ShowWindow,
     };
     let hwnd = MAIN_WINDOW_HWND.load(Ordering::Relaxed);
     if hwnd != 0 {
         let hwnd = HWND(hwnd as *mut core::ffi::c_void);
         unsafe {
             if !IsWindowVisible(hwnd).as_bool() {
-                let _ = ShowWindow(hwnd, SW_SHOW);
-                let _ = SetForegroundWindow(hwnd);
+                if matches!(cmd, TrayCmd::Quit) {
+                    // On the way out: a stale window has nothing to show
+                    // and Gupax has no business stealing focus from
+                    // whatever the user is doing for the moments it takes
+                    // to stop the child processes.
+                    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                } else {
+                    let _ = ShowWindow(hwnd, SW_SHOW);
+                    let _ = SetForegroundWindow(hwnd);
+                }
             }
         }
     }

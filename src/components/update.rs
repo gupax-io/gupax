@@ -639,6 +639,10 @@ fn restart_gupax() {
     let args = gupax_args.skip(1).collect::<Vec<String>>();
     let mut cmd = Command::new(gupax_path);
     cmd.args(args);
+    // The successor is spawned while this process is still alive, so hand
+    // over the single-instance guard first or it can find it still held
+    // and exit on the spot, leaving no Gupax running at all.
+    crate::utils::single_instance::release();
     cmd.spawn().unwrap();
     exit(0)
 }
