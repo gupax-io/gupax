@@ -419,15 +419,33 @@ impl Helper {
     ) -> Command {
         args.push("-l".to_string());
         args.push(output_path.display().to_string());
-        let mut cmd = Command::new("osascript");
-        cmd.arg("-e");
-        let arg = format!(
-            "do shell script \"{} {} <> {}\" with administrator privileges",
-            path.display(),
-            args.join(" "),
-            input_path.display()
+
+        cfg_if!(
+            // For Apple Silicon macs, sudo doesn't improve performance and osascript blocks use of performance cores
+            if #[cfg(target_arch = "aarch64")] {
+                use std::fs::{File, OpenOptions};
+
+                let out_file = File::create(output_path).unwrap();
+                let in_file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(input_path).unwrap();
+                let mut cmd = Command::new(&path);
+                cmd.args(args);
+                cmd.stdout(out_file);
+                cmd.stdin(in_file);
+            } else {
+                let mut cmd = Command::new("osascript");
+                cmd.arg("-e");
+                let arg = format!(
+                    "do shell script \"{} {} <> {}\" with administrator privileges",
+                    path.display(),
+                    args.join(" "),
+                    input_path.display()
+                );
+                cmd.arg(arg);
+            }
         );
-        cmd.arg(arg);
         cmd.current_dir(path.as_path().parent().unwrap());
         cmd
     }
@@ -524,7 +542,7 @@ impl Helper {
                     let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
                     let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_reader);
 
-                        } else if #[cfg(target_os ="macos")] {
+                        } else if #[cfg(target_os = "macos")] {
                     use nix::sys::stat::Mode;
                     let temp_dir = std::env::temp_dir();
                     let mut input_path = temp_dir.to_path_buf();
