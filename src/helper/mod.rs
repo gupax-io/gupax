@@ -138,6 +138,7 @@ pub struct Process {
     pub name: ProcessName,     // P2Pool or XMRig?
     pub state: ProcessState,   // The state of the process (alive, dead, etc)
     pub signal: ProcessSignal, // Did the user click [Start/Stop/Restart]?
+    pub external: bool,        // A detected Node that Gupax did not start
     // STDIN Problem:
     //     - User can input many many commands in 1 second
     //     - The process loop only processes every 1 second
@@ -180,6 +181,7 @@ impl Process {
             name,
             state: ProcessState::Dead,
             signal: ProcessSignal::None,
+            external: false,
             start: Instant::now(),
             //			stdin: Option::None,
             //			child: Option::None,
@@ -203,6 +205,14 @@ impl Process {
     #[inline]
     pub fn is_waiting(&self) -> bool {
         self.state == ProcessState::Middle || self.state == ProcessState::Waiting
+    }
+
+    /// Clear the signal once the child is spawned: a Restart is done by
+    /// then, and a Stop raised while starting still has to be carried out.
+    pub fn reset_signal_on_start(&mut self) {
+        if self.signal != ProcessSignal::Stop {
+            self.signal = ProcessSignal::None;
+        }
     }
     pub fn _initialize_process_pid(&mut self, sys: Arc<Mutex<System>>) -> bool {
         if let Some(process) = sys
@@ -273,7 +283,19 @@ pub enum ProcessName {
     Xvb,
 }
 
+/// Raises a process's stop flag; its watchdog kills the process.
+pub type StopFn = fn(&Arc<Mutex<Helper>>);
+
 impl ProcessName {
+    pub const fn stop_fn(&self) -> StopFn {
+        match self {
+            ProcessName::Node => Helper::stop_node,
+            ProcessName::P2pool => Helper::stop_p2pool,
+            ProcessName::Xmrig => Helper::stop_xmrig,
+            ProcessName::XmrigProxy => Helper::stop_xp,
+            ProcessName::Xvb => Helper::stop_xvb,
+        }
+    }
     pub const fn binary_name(&self) -> &str {
         match self {
             ProcessName::Node => NODE_BINARY,

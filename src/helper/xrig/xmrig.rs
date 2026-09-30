@@ -577,7 +577,7 @@ impl Helper {
         debug!("XMRig | Setting process state...");
         let mut lock = process.lock().unwrap();
         lock.state = ProcessState::NotMining;
-        lock.signal = ProcessSignal::None;
+        lock.reset_signal_on_start();
         lock.start = Instant::now();
         drop(lock);
 
@@ -632,13 +632,7 @@ impl Helper {
                 break;
             }
             // Stop on [Stop/Restart] SIGNAL
-            if Self::xmrig_signal_end(
-                &mut process.lock().unwrap(),
-                &mut stdin,
-                &child_pty,
-                &start,
-                &mut gui_api.lock().unwrap().output,
-            ) {
+            if Self::xmrig_signal_end(&process, &mut stdin, &child_pty, &start, &gui_api) {
                 break;
             }
             // Check vector of user input
@@ -725,21 +719,24 @@ impl Helper {
         info!("XMRig Watchdog | Watchdog thread exiting... Goodbye!");
     }
     fn xmrig_signal_end(
-        process: &mut Process,
+        process: &Arc<Mutex<Process>>,
         stdin: &mut Box<dyn std::io::Write + Send>,
         child_pty: &Arc<Mutex<Child>>,
         start: &Instant,
-        gui_api_output_raw: &mut String,
+        gui_api: &Arc<Mutex<PubXmrigApi>>,
     ) -> bool {
-        let signal = &process.signal;
-        if *signal == ProcessSignal::Stop || *signal == ProcessSignal::Restart {
+        let signal = process.lock().unwrap().signal.clone();
+        if signal == ProcessSignal::Stop || signal == ProcessSignal::Restart {
             debug!("XMRig Watchdog | Stop/Restart SIGNAL caught");
             // send a Ctrl+C in the input, overriding the need to re-authenticate
 
             if let Err(e) = stdin.write_all(&[0x03]) {
                 error!("XMRig Watchdog | Kill error: {e}");
             }
-            let exit_status = match child_pty.lock().unwrap().wait() {
+            // The process and GUI locks are released during this wait, which has no timeout.
+            let exit = child_pty.lock().unwrap().wait();
+            let mut process = process.lock().unwrap();
+            let exit_status = match exit {
                 Ok(e) => {
                     if e.success() {
                         if process.signal == ProcessSignal::Stop {
@@ -763,7 +760,7 @@ impl Helper {
             let uptime = Uptime::from(start.elapsed());
             info!("XMRig | Stopped ... Uptime was: [{uptime}], Exit status: [{exit_status}]");
             if let Err(e) = writeln!(
-                gui_api_output_raw,
+                gui_api.lock().unwrap().output,
                 "{HORI_CONSOLE}\nXMRig stopped | Uptime: [{uptime}] | Exit status: [{exit_status}]\n{HORI_CONSOLE}\n\n\n\n"
             ) {
                 error!("XMRig Watchdog | GUI Uptime/Exit status write failed: {e}");

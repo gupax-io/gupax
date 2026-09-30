@@ -32,7 +32,7 @@ impl crate::app::App {
         debug!("App | Rendering BOTTOM bar");
         Panel::bottom("bottom")
             .show_separator_line(true)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.style_mut().override_text_style = Some(TextStyle::Button);
                 let size_font = ui
                     .style()

@@ -24,30 +24,28 @@ impl crate::app::App {
     pub fn top_panel(&mut self, ui: &mut egui::Ui) {
         debug!("App | Rendering TOP tabs");
         let tabs = Tab::from_show_processes(&self.state.gupax.show_processes);
-        Panel::top("top")
-            .show_separator_line(true)
-            .show_inside(ui, |ui| {
-                // low spacing to shrink and be able to show all tabs on one line on 640x480
-                ui.style_mut().spacing.item_spacing.x = 4.0;
-                // spacing of separator, will reduce width size of the button. Low value so that tabs can be selected easily.
-                let spacing_separator = 2.0;
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                    ui.style_mut().override_text_style = Some(TextStyle::Heading);
-                    let height = ui
-                        .style()
-                        .text_styles
-                        .get(&TextStyle::Heading)
-                        .unwrap()
-                        .size
-                        * 2.75;
-                    // width = (width - / number of tab) - (space between widget * 2.0 + space of separator / 2.0)
-                    let width = (((self.size.x) / tabs.len() as f32)
-                        - ((ui.style().spacing.item_spacing.x * 2.0) + (spacing_separator / 2.0)))
-                        .max(0.0);
-                    // height of tab menu relative to size of text. coeff 2.75 is arbitrary but good enough to be easily clickable.
-                    self.tabs(ui, [width, height], spacing_separator, tabs);
-                });
+        Panel::top("top").show_separator_line(true).show(ui, |ui| {
+            // low spacing to shrink and be able to show all tabs on one line on 640x480
+            ui.style_mut().spacing.item_spacing.x = 4.0;
+            // spacing of separator, will reduce width size of the button. Low value so that tabs can be selected easily.
+            let spacing_separator = 2.0;
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                ui.style_mut().override_text_style = Some(TextStyle::Heading);
+                let height = ui
+                    .style()
+                    .text_styles
+                    .get(&TextStyle::Heading)
+                    .unwrap()
+                    .size
+                    * 2.75;
+                // width = (width - / number of tab) - (space between widget * 2.0 + space of separator / 2.0)
+                let width = (((self.size.x) / tabs.len() as f32)
+                    - ((ui.style().spacing.item_spacing.x * 2.0) + (spacing_separator / 2.0)))
+                    .max(0.0);
+                // height of tab menu relative to size of text. coeff 2.75 is arbitrary but good enough to be easily clickable.
+                self.tabs(ui, [width, height], spacing_separator, tabs);
             });
+        });
     }
 
     fn tabs(&mut self, ui: &mut Ui, size: [f32; 2], spacing_separator: f32, tabs: Vec<Tab>) {

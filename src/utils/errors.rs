@@ -2,10 +2,10 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum ErrorButtons {
-    YesQuit,
     UseDetectedLocalNode((u16, u16)),
     UseNonSyncedNode,
     StayQuit,
+    TrayOnClose,
     ResetState,
     ResetNode,
     Okay,

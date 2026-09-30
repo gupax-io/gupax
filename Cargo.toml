@@ -30,12 +30,10 @@ benri = "0.1.12"
 bytes = "1.11.1"
 dirs = "6.0.0"
 #--------------------------------------------------------------------------------
-# egui = "0.33"
-egui = {git="https://github.com/emilk/egui", rev="f32727d"}
+egui = "0.36.2"
 
-# egui_extras = {version="0.33", features = ["image"] }
-egui_extras = {git="https://github.com/emilk/egui", features = ["image"], rev="f32727d" }
-egui_commonmark = {git="https://github.com/Cyrix126/egui_commonmark", features=["better_syntax_highlighting"]}
+egui_extras = {version="0.36.2", features = ["image"] }
+egui_commonmark = {version="0.25.0", features=["better_syntax_highlighting"]}
 
 ## 2023-12-28: https://github.com/hinto-janai/gupax/issues/68
 ##
@@ -79,8 +77,7 @@ enclose = "1.2.1"
 bounded-vec-deque = {version="0.1.1", default-features=false}
 cfg-if = "1.0"
 flexi_logger = "0.31"
-# eframe = {version="0.33", features=["wgpu"]}
-eframe = {git="https://github.com/emilk/egui", features=["wgpu", "glow"], rev="f32727d"}
+eframe = {version="0.36.2", features=["wgpu", "glow"]}
 strum = {version="0.28", features=["derive"]}
 ## force version of ring to prevent https://rustsec.org/advisories/RUSTSEC-2025-0009
 ring = "0.17.14"
@@ -102,6 +99,14 @@ ctrlc = {version="3.5", features=["termination"]}
 
 tokio-stream = {version = "0.1", default-features=false}
 thiserror = "2.0"
+
+# System tray
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tray-icon = "0.24"
+[target.'cfg(target_os = "linux")'.dependencies]
+# async-io backend: ksni runs its own reactor thread
+ksni = {version="0.3", default-features=false, features=["blocking", "async-io"]}
+
 # Unix dependencies
 [target.'cfg(unix)'.dependencies]
 bzip2-rs = "0.1"
@@ -109,14 +114,33 @@ tar = "0.4.44"
 flate2 = "1.1"
 sudo = "0.6.0"
 # https://github.com/emilk/egui/releases/tag/0.30.0 see breaking change
-# eframe = {version="0.33", features=["x11", "wayland"]}
-eframe = {git="https://github.com/emilk/egui", features=["x11", "wayland", "glow", "wgpu"], rev="f32727d"}
+eframe = {version="0.36.2", features=["x11", "wayland", "glow", "wgpu"]}
 # macOS
 [target.'cfg(target_os = "macos")'.dependencies]
 nix = { version = "0.31", features = ["fs"] }
+## activation-policy handling, see src/tray/macos.rs
+## (winit must match the version eframe links)
+winit = "0.30"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  ## NSApplication needs the NSResponder feature, and the activation
+  ## policy getter/setter the NSRunningApplication one
+  "NSResponder",
+  "NSApplication",
+  "NSRunningApplication",
+] }
+## Gupax.app opened again, see show_on_reopen in src/tray/macos.rs
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "NSNotification",
+  "NSOperation",
+  "NSString",
+] }
 [dev-dependencies]
-# egui = {version="0.33", features=["callstack"]}
-egui = {git="https://github.com/emilk/egui", rev="f32727d", features=["callstack"]}
+egui = {version="0.36.2", features=["callstack"]}
 # egui = {git="https://github.com/emilk/egui", features=["callstack"]}
 
 

@@ -255,6 +255,7 @@ impl Helper {
         img: ImgNode,
     ) {
         process.lock().unwrap().start = Instant::now();
+        process.lock().unwrap().external = ports_detected_local_node.is_some();
         // spawn pty if we are starting it from gupax
         debug!("Node | Creating PTY...");
         let mut child_pty = None;
@@ -299,7 +300,7 @@ impl Helper {
         // set state
         let client = Client::new();
         process.lock().unwrap().state = ProcessState::Syncing;
-        process.lock().unwrap().signal = ProcessSignal::None;
+        process.lock().unwrap().reset_signal_on_start();
         // reset stats
         *pub_api.lock().unwrap() = PubNodeApi::new();
         *gui_api.lock().unwrap() = PubNodeApi::new();

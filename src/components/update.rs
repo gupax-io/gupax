@@ -204,7 +204,7 @@ impl Update {
                                 );
                                 *restart.lock().unwrap() = true;
                             } else {
-                                restart_gupax();
+                                request_restart();
                             }
                         }
                     }
@@ -334,7 +334,7 @@ impl Update {
                             );
                             *restart.lock().unwrap() = true;
                         } else {
-                            restart_gupax();
+                            request_restart();
                         }
                     }
                 }
@@ -634,13 +634,28 @@ pub enum UpdateError {
     ZipArchive(#[from] zip::result::ZipError),
 }
 
-fn restart_gupax() {
+/// Ask the main thread to restart Gupax, so it removes the tray icon first:
+/// `exit(0)` runs no destructors, and Windows keeps showing the icon of an
+/// exited process. Restart here when nothing listens.
+fn request_restart() {
+    if !crate::tray::request(crate::tray::TrayCmd::Restart) {
+        restart_gupax();
+    }
+}
+
+/// Replace this process with the downloaded Gupax.
+///
+/// Reached through [`request_restart`].
+pub fn restart_gupax() -> ! {
     warn!("Restarting Gupax after upgrading !");
     let gupax_path = std::env::current_exe().unwrap();
     let gupax_args = std::env::args();
     let args = gupax_args.skip(1).collect::<Vec<String>>();
     let mut cmd = Command::new(gupax_path);
     cmd.args(args);
+    // The new Gupax is started while this process runs: it waits for this
+    // process to exit, then takes the single-instance guard.
+    crate::utils::single_instance::stop_answering();
     cmd.spawn().unwrap();
     exit(0)
 }

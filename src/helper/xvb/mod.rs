@@ -136,7 +136,7 @@ impl Helper {
         {
             let mut lock = process.lock().unwrap();
             lock.state = ProcessState::Middle;
-            lock.signal = ProcessSignal::None;
+            lock.reset_signal_on_start();
             lock.start = std::time::Instant::now();
         }
         // verify if address is existent on XvB server
@@ -410,7 +410,7 @@ impl Helper {
                                         *last_algorithm.lock().unwrap() = Instant::now();
                                         *handle_algo.lock().unwrap() = Some(spawn(enc!((client, gui_api_xmrig, gui_api_xp, state_xmrig,   state_xvb, proxy_img, xmrig_img, p2pool_img, process_p2pool) async move {
                         let algorithm = Algorithm::new(gui_api_p2pool, p2pool_img, gui_api.clone(),  hashrate_provider);
-                        info!("Algorithm data: {:#?}", &algorithm);
+                        info!("Algorithm data: {:#?}", algorithm);
                         algorithm.run(&gui_api).await;
                         info!("Done running algorithm");
                                         })));
@@ -812,26 +812,27 @@ fn signal_interrupt(
             reset_data_xvb(pub_api, gui_api);
             return true;
         }
-        ProcessSignal::UpdatePools(pool) => {
-            if process.lock().unwrap().state != ProcessState::Waiting {
-                warn!("received the UpdatePool signal");
-                let token_xmrig = if xp_alive {
-                    state_xp.token.clone()
-                } else {
-                    state_xmrig.token.clone()
-                };
-                let address = state_p2pool.address.clone();
-                // check if state is alive. If it is and it is receiving such a signal, it means something a pool (XvB or P2Pool) has failed.
-                // if XvB, xmrig needs to be switch to the other pool (both will be checked though to be sure).
-                // if both XvB pools fail after checking, process will be partially stopped and a new spawn will verify if pools are again online and so will continue the process completely if that's the case.
-                // if P2pool, the process has to stop the algo and continue partially. The process will continue completely if the confitions are met again.
-                // if XvB was not alive, then if it is for XvB pools, it will check and update preferred pool and set XMRig to P2pool if that's not the case.
-                let was_alive = process.lock().unwrap().state == ProcessState::Alive;
-                // so it won't execute another signal of update pools if it is already doing it.
-                process.lock().unwrap().state = ProcessState::Waiting;
-                process.lock().unwrap().signal = ProcessSignal::None;
-                spawn(
-                    enc!((pool, process, client, gui_api, pub_api, was_alive, address, token_xmrig, process_xrig, xmrig_img, proxy_img, process_p2pool, state_p2pool, p2pool_img, state_xvb, hashrate_provider) async move {
+        ProcessSignal::UpdatePools(pool)
+            if process.lock().unwrap().state != ProcessState::Waiting =>
+        {
+            warn!("received the UpdatePool signal");
+            let token_xmrig = if xp_alive {
+                state_xp.token.clone()
+            } else {
+                state_xmrig.token.clone()
+            };
+            let address = state_p2pool.address.clone();
+            // check if state is alive. If it is and it is receiving such a signal, it means something a pool (XvB or P2Pool) has failed.
+            // if XvB, xmrig needs to be switch to the other pool (both will be checked though to be sure).
+            // if both XvB pools fail after checking, process will be partially stopped and a new spawn will verify if pools are again online and so will continue the process completely if that's the case.
+            // if P2pool, the process has to stop the algo and continue partially. The process will continue completely if the confitions are met again.
+            // if XvB was not alive, then if it is for XvB pools, it will check and update preferred pool and set XMRig to P2pool if that's not the case.
+            let was_alive = process.lock().unwrap().state == ProcessState::Alive;
+            // so it won't execute another signal of update pools if it is already doing it.
+            process.lock().unwrap().state = ProcessState::Waiting;
+            process.lock().unwrap().signal = ProcessSignal::None;
+            spawn(
+                enc!((pool, process, client, gui_api, pub_api, was_alive, address, token_xmrig, process_xrig, xmrig_img, proxy_img, process_p2pool, state_p2pool, p2pool_img, state_xvb, hashrate_provider) async move {
                     match pool {
                         Pool::XvBNorthAmerica(_)|Pool::XvBEurope(_) if was_alive => {
                             // a pool is failing. We need to first verify if a pool is available
@@ -884,8 +885,7 @@ fn signal_interrupt(
             },
                         _ => {}
                 } } ),
-                );
-            }
+            );
         }
         _ => {}
     }

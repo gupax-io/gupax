@@ -323,7 +323,7 @@ fn xmrig(
             .on_hover_text(STATUS_XMRIG_THREADS);
         ui.label(format!(
             "{}/{}",
-            &xmrig_img.lock().unwrap().threads,
+            xmrig_img.lock().unwrap().threads,
             max_threads
         ));
         drop(api);

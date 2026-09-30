@@ -53,7 +53,7 @@ impl Status {
                     // ui.add_sized([width, text], Label::new(format!("{}", cpu.benchmarks)));
                     ui.label(RichText::new("Rank").underline().color(BONE))
                         .on_hover_text(STATUS_SUBMENU_YOUR_RANK);
-                    ui.label(format!("{}/{}", cpu.rank, &benchmarks.len()));
+                    ui.label(format!("{}/{}", cpu.rank, benchmarks.len()));
                 })
             });
             ui.group(|ui| {

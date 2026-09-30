@@ -242,7 +242,7 @@ impl Crawler {
             }
 
             // sort by latency every time a new one is found
-            crawler_lock.nodes.sort_by(|a, b| a.ms.cmp(&b.ms));
+            crawler_lock.nodes.sort_by_key(|node| node.ms);
 
             // We need to update backup nodes if they are used
             // We update them here so that we do not rely on UI to do the update

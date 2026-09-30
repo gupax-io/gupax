@@ -367,8 +367,7 @@ impl Algorithm {
     fn estimate_external_p2pool_hr(&self) -> u64 {
         let mut p2pool_external_hashrate = self
             .estimate_p2pool_total_hr()
-            .checked_sub(self.p2pool_avg_last_hour_hashrate)
-            .unwrap_or_default();
+            .saturating_sub(self.p2pool_avg_last_hour_hashrate);
         // do not take into account very small external hashrate as the estimation has a margin of error.
         if (p2pool_external_hashrate as f32)
             < (self.estimate_p2pool_total_hr() as f32 * Self::MARGIN_EXTERNAL_HR)
@@ -412,12 +411,8 @@ impl Algorithm {
     }
 
     fn fast_mode(&self, target: &Target) -> bool {
-        if self.xvb_24h_avg < target.target_hr
+        self.xvb_24h_avg < target.target_hr
             || self.xvb_1h_avg < target.target_hr * (1.0 - XVB_SIDE_MARGIN_1H)
-        {
-            return true;
-        }
-        false
     }
     const MARGIN_EXTERNAL_HR: f32 = 0.02;
 }

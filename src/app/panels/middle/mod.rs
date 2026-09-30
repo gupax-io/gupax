@@ -39,7 +39,7 @@ impl crate::app::App {
     pub fn middle_panel(&mut self, ui: &mut egui::Ui, key: KeyPressed, states: &ProcessStatesGui) {
         // Middle panel, contents of the [Tab]
         debug!("App | Rendering CENTRAL_PANEL (tab contents)");
-        CentralPanel::default().show_inside(ui, |ui| {
+        CentralPanel::default().show(ui, |ui| {
             self.size.x = ui.available_width();
             self.size.y = ui.available_height();
             // This sets the Ui dimensions after Top/Bottom are filled

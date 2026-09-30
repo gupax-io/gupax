@@ -130,6 +130,10 @@ impl App {
                                     .clicked()
                                 {
                                     self.state.gupax.auto.enable(auto, is_checked);
+                                    // Answers the one-time close question too.
+                                    if *auto == AutoStart::HideToTray {
+                                        self.state.gupax.asked_close_to_tray = true;
+                                    }
                                 }
                             });
                             // add a space to prevent selectable button to be at the same line as the end of the top bar. Make it the same spacing as separators.

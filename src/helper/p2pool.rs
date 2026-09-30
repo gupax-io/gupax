@@ -659,7 +659,7 @@ impl Helper {
         debug!("P2Pool | Setting process state...");
         let mut lock = process.lock().unwrap();
         lock.state = ProcessState::Syncing;
-        lock.signal = ProcessSignal::None;
+        lock.reset_signal_on_start();
         lock.start = Instant::now();
         let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
         drop(lock);
@@ -1231,17 +1231,13 @@ impl PubP2poolApi {
         let p2pool_hashrate = pool.pool_statistics.hashRate;
         let p2pool_difficulty = pool.pool_statistics.sidechainDifficulty;
         // These [0] checks prevent dividing by 0 (it [panic!()]s)
-        let p2pool_block_mean;
-        let user_p2pool_percent;
-        if p2pool_hashrate == 0 {
-            p2pool_block_mean = HumanTime::new();
-            user_p2pool_percent = HumanNumber::unknown();
+        let p2pool_block_mean =
+            Self::calculate_share_or_block_time(p2pool_hashrate, monero_difficulty);
+        let user_p2pool_percent = if p2pool_hashrate == 0 {
+            HumanNumber::unknown()
         } else {
-            p2pool_block_mean = HumanTime::into_human(std::time::Duration::from_secs(
-                monero_difficulty / p2pool_hashrate,
-            ));
             let f = (user_hashrate as f64 / p2pool_hashrate as f64) * 100.0;
-            user_p2pool_percent = HumanNumber::from_f64_to_percent_6_point(f);
+            HumanNumber::from_f64_to_percent_6_point(f)
         };
         let p2pool_percent;
         let user_monero_percent;
@@ -1254,19 +1250,9 @@ impl PubP2poolApi {
             let f = (user_hashrate as f64 / monero_hashrate as f64) * 100.0;
             user_monero_percent = HumanNumber::from_f64_to_percent_6_point(f);
         };
-        let solo_block_mean;
-        let p2pool_share_mean;
-        if user_hashrate == 0 {
-            solo_block_mean = HumanTime::new();
-            p2pool_share_mean = HumanTime::new();
-        } else {
-            solo_block_mean = HumanTime::into_human(std::time::Duration::from_secs(
-                monero_difficulty / user_hashrate,
-            ));
-            p2pool_share_mean = HumanTime::into_human(std::time::Duration::from_secs(
-                p2pool_difficulty / user_hashrate,
-            ));
-        }
+        let solo_block_mean = Self::calculate_share_or_block_time(user_hashrate, monero_difficulty);
+        let p2pool_share_mean =
+            Self::calculate_share_or_block_time(user_hashrate, p2pool_difficulty);
         *public = Self {
             p2pool_difficulty_u64: p2pool_difficulty,
             monero_difficulty_u64: monero_difficulty,
@@ -1311,11 +1297,9 @@ impl PubP2poolApi {
 
     #[inline]
     pub fn calculate_share_or_block_time(hashrate: u64, difficulty: u64) -> HumanTime {
-        if hashrate == 0 {
-            HumanTime::new()
-        } else {
-            HumanTime::from_u64(difficulty / hashrate)
-        }
+        difficulty
+            .checked_div(hashrate)
+            .map_or_else(HumanTime::new, HumanTime::from_u64)
     }
 
     #[inline]

@@ -37,6 +37,7 @@ It is intended for end users and offers a friendly and easy user experience, whi
 	- [Proxy](#Proxy)
 	- [XvB](#XvB)
 * [Daemon mode](#daemon-mode)
+* [System tray](#system-tray)
 * [Troubleshooting](#troubleshooting)
 	- [Windows](#windows)
 	- [Mac OSX](#mac-osx)
@@ -81,7 +82,7 @@ A more detailed documentation for advanced users and developers
 To come !
 
 ## Tabs
-Each service tab can be hidden in the settings (Gupax tab). Only the `P2Pool` and `XMRig` tabs are enabled by default to make Gupax more simple to new users.
+Each service tab can be hidden in the Settings tab. Only the `P2Pool` and `XMRig` tabs are enabled by default to make Gupax more simple to new users.
 ### Simple/Advanced
 Each services offers a simple sub-menu (accessible on the bottom bar). The simple mode will start the service with default working out of the box settings. The advanced mode allows powerful users to configure each services to correspond to their needs.
 ### About
@@ -90,7 +91,7 @@ The About tab will show you a brief description of Gupax, along with the availab
 ### Status
 This tab has three sub-menus. By default the `Processes` sub-menu will appear.
 #### Processes
-Monitoring of every services, as well as displaying resources usage of the system. You can hide the column of a service by checking the Gupax tab.
+Monitoring of every services, as well as displaying resources usage of the system. You can hide the column of a service in the Settings tab.
 ![Processes Tab](assets/images/tabs/processes.png)
 #### Payouts
 You can see rewards that you were paid. You also have a tool to calculate rewards based on your hashrate. The calculator needs P2Pool to be synced so it has the needed data up to date.
@@ -139,9 +140,16 @@ The daemon is configurable by the same configuration file that is used by the no
 
 Once started, you can enter the key 's' to print the status of started processes.
 
+## System tray
+Gupax can keep running in the background with a system tray icon.
+Two settings are available in the Settings tab:
+- **Close to tray**: closing the window hides Gupax to the tray instead of quitting. Use the tray's Show/Hide entry to bring the window back, and its Quit entry to exit. On Windows and Linux a left-click on the icon also brings the window back; on macOS a click opens the menu. The first time you close the window, Gupax asks once whether to enable this.
+- **Start with Tray**: the Gupax icon is shown in the system tray at startup (enabled by default). To start Gupax hidden in the tray, use the `--tray` CLI argument.
 
 ## Troubleshooting
 If you have any issue, feel free to ask for support in the [xmrvsbeast matrix room](#xmrvsbeast:monero.social) [![Chat on Matrix](https://matrix.to/img/matrix-badge.svg)](https://matrix.to/#/#xmrvsbeast:monero.social) or you can also just [open an issue](https://github.com/gupax-io/gupax/issues/new/choose) in this repo. You can also contact me through [email](mailto:gupax@baermail.fr).
+### GNOME
+GNOME needs the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) for the system tray icon to be visible.
 ### Windows
 You must add an exception to your antivirus for the directory where Gupax is executed. Follow the step for Windows only, that starts at 30 seconds in this [video](https://user-images.githubusercontent.com/101352116/207978455-6ffdc0cc-204c-4594-9a2f-e10c505745bc.mp4).
 ### Mac OSX

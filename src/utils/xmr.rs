@@ -282,15 +282,14 @@ impl PayoutOrd {
     pub fn sort_payout_high_to_low(&mut self) {
         // This is a little confusing because wrapper types are basically 1 element tuples so:
         // self.0 = The [Vec] within [PayoutOrd]
-        // b.1.0  = [b] is [(String, AtomicUnit, HumanNumber)], [.1] is the [AtomicUnit] inside it, [.0] is the [u64] inside that
-        // a.1.0  = Same deal, but we compare it with the previous value (b)
-        self.0.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+        // a.1.0  = [a] is [(String, AtomicUnit, HumanNumber)], [.1] is the [AtomicUnit] inside it, [.0] is the [u64] inside that
+        self.0.sort_by_key(|a| std::cmp::Reverse(a.1.0));
     }
 
     // These sorting functions take around [0.0035~] seconds on a Ryzen 5950x
     // given a Vec filled with 1_000_000 elements, not bad.
     pub fn sort_payout_low_to_high(&mut self) {
-        self.0.sort_by(|a, b| a.1.0.cmp(&b.1.0));
+        self.0.sort_by_key(|a| a.1.0);
     }
 
     // Returns a reversed [Iter] of the [PayoutOrd]

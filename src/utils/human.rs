@@ -110,7 +110,7 @@ pub struct HumanNumber(String);
 
 impl std::fmt::Display for HumanNumber {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", &self.0)
+        write!(f, "{}", self.0)
     }
 }
 

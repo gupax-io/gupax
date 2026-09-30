@@ -22,7 +22,10 @@ jobs:
     - name: Format
       run: cargo fmt --all --check
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
     steps:
     - uses: actions/checkout@v4
     - name: Test
@@ -36,6 +39,17 @@ jobs:
     - uses: actions/checkout@v4
     - name: Clippy (fail on warnings)
       run: cargo clippy -- -D warnings
+  clippy-windows:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y mingw-w64
+        rustup target install x86_64-pc-windows-gnu
+    - name: Clippy (fail on warnings)
+      run: cargo clippy --target x86_64-pc-windows-gnu -- -D warnings
   check:
     runs-on: ${{ matrix.os }}
     strategy:

@@ -82,8 +82,6 @@ impl<'a> StateTextEdit<'a> {
             let color;
             let symbol;
             let mut input_validated = true;
-            let len;
-            let inside_space;
             for v in self.validations {
                 if !v(state_field) {
                     input_validated = false;
@@ -100,20 +98,11 @@ impl<'a> StateTextEdit<'a> {
                 symbol = "❌";
                 color = Color32::from_rgb(230, 50, 50);
             }
-            match self.max_ch {
-                x if x >= 100 => {
-                    len = format!("{:03}", state_field.len());
-                    inside_space = "";
-                }
-                10..99 => {
-                    len = format!("{:02}", state_field.len());
-                    inside_space = " ";
-                }
-                _ => {
-                    len = format!("{}", state_field.len());
-                    inside_space = "  ";
-                }
-            }
+            let (len, inside_space) = match self.max_ch {
+                x if x >= 100 => (format!("{:03}", state_field.len()), ""),
+                10..99 => (format!("{:02}", state_field.len()), " "),
+                _ => (format!("{}", state_field.len()), "  "),
+            };
             let text = format!(
                 "{}[{}{}/{}{}]{}",
                 self.description, inside_space, len, self.max_ch, inside_space, symbol
@@ -167,22 +156,13 @@ impl<'a> StateTextEdit<'a> {
 // path to choose
 pub fn path_db_field(ui: &mut Ui, path: &mut String, file_window: &Arc<Mutex<FileWindow>>) {
     ui.horizontal(|ui| {
-        let symbol;
-        let color;
-        let hover;
-        if path.is_empty() {
-            symbol = "➖";
-            color = LIGHT_GRAY;
-            hover = NODE_DB_PATH_EMPTY;
+        let (symbol, color, hover) = if path.is_empty() {
+            ("➖", LIGHT_GRAY, NODE_DB_PATH_EMPTY)
         } else if !Gupax::path_is_dir(path) {
-            symbol = "❌";
-            color = RED;
-            hover = NODE_DB_DIR;
+            ("❌", RED, NODE_DB_DIR)
         } else {
-            symbol = "✔";
-            color = GREEN;
-            hover = NODE_PATH_OK;
-        }
+            ("✔", GREEN, NODE_PATH_OK)
+        };
         let text = ["Node Database Directory ", symbol].concat();
         ui.add_sized(
             [0.0, height_txt_before_button(ui, &TextStyle::Body)],
@@ -200,19 +180,20 @@ pub fn path_db_field(ui: &mut Ui, path: &mut String, file_window: &Arc<Mutex<Fil
 }
 pub fn monero_address_field(address: &mut String, ui: &mut Ui, hover: &str) {
     ui.group(|ui| {
-        let text;
-        let color;
         let len = format!("{:02}", address.len());
-        if address.is_empty() {
-            text = format!("Monero Address [{len}/95] ➖");
-            color = Color32::LIGHT_GRAY;
+        let (text, color) = if address.is_empty() {
+            (format!("Monero Address [{len}/95] ➖"), Color32::LIGHT_GRAY)
         } else if Regexes::addr_ok(address) {
-            text = format!("Monero Address [{len}/95] ✔");
-            color = Color32::from_rgb(100, 230, 100);
+            (
+                format!("Monero Address [{len}/95] ✔"),
+                Color32::from_rgb(100, 230, 100),
+            )
         } else {
-            text = format!("Monero Address [{len}/95] ❌");
-            color = Color32::from_rgb(230, 50, 50);
-        }
+            (
+                format!("Monero Address [{len}/95] ❌"),
+                Color32::from_rgb(230, 50, 50),
+            )
+        };
         ui.style_mut().spacing.text_edit_width = ui.available_width();
         ui.vertical_centered(|ui| {
             ui.label(RichText::new(text).color(color));

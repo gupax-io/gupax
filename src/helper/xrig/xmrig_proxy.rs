@@ -429,7 +429,7 @@ impl Helper {
         // set state
         let client = client();
         process.lock().unwrap().state = ProcessState::NotMining;
-        process.lock().unwrap().signal = ProcessSignal::None;
+        process.lock().unwrap().reset_signal_on_start();
         // reset stats
         *pub_api.lock().unwrap() = PubXmrigProxyApi::new();
         *gui_api.lock().unwrap() = PubXmrigProxyApi::new();

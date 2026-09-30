@@ -93,26 +93,47 @@ pub type BackupNodes = Arc<Mutex<Vec<PoolNode>>>;
 // The state of the outer main [App].
 // See the [State] struct in [state.rs] for the
 // actual inner state of the tab settings.
+/// `Clone` and `Send` handle to the [`App`], shared between threads.
+/// `GuiApp` in [`eframe_impl`] uses it and holds the main-thread-only
+/// state, the tray icon.
 #[derive(Clone)]
 pub struct AppEgui {
     pub inner: Arc<egui::mutex::Mutex<App>>,
 }
+/// State of the main window relative to the system tray.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum WindowState {
+    #[default]
+    Visible,
+    /// [--tray]: the first window is hidden once the tray icon exists
+    /// (Linux creates no window, see
+    /// [`crate::app::eframe_impl::start_in_tray`]).
+    StartingInTray,
+    /// On Linux no window exists.
+    HiddenToTray,
+}
+
+/// Progress of a quit that has been asked for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum QuitPhase {
+    #[default]
+    None,
+    /// The GUI thread has not started the quit yet.
+    Asked,
+    /// The children are being stopped, and Gupax exits after them.
+    Stopping,
+}
+
 #[allow(unused)]
 pub struct App {
     // Misc state
     pub tab: Tab,   // What tab are we on?
     pub size: Vec2, // Top-level width and Top-level height
-    // Alpha (transparency)
-    // This value is used to incrementally increase/decrease
-    // the transparency when resizing. Basically, it fades
-    // in/out of black to hide jitter when resizing with [init_text_styles()]
-    pub alpha: u8,
     // This is a one time trigger so [init_text_styles()] isn't
     // called 60x a second when resizing the window. Instead,
     // it only gets called if this bool is true and the user
     // is hovering over egui (ctx.is_pointer_over_area()).
     pub must_resize: bool, // Sets the flag so we know to [init_text_styles()]
-    pub resizing: bool,    // Are we in the process of resizing? (For black fade in/out)
     // State
     pub og: Arc<Mutex<State>>, // og = Old state to compare against
     pub state: State,          // state = Working state (current settings)
@@ -162,6 +183,16 @@ pub struct App {
     pub xmrig_proxy_stdin: String, // The buffer between the xmrig-proxy console and the [Helper]
     // State from [--flags]
     pub no_startup: bool,
+    pub daemon: bool,
+    pub start_in_tray_flag: bool,
+    pub window_state: WindowState,
+    /// A close that hides to the tray was sent and is not processed yet.
+    pub hide_close_pending: bool,
+    /// Size of the window, for a window re-created from the tray.
+    pub last_window_size: Option<Vec2>,
+    pub quit_phase: QuitPhase,
+    /// The first window is off-screen, see [`crate::tray::start_as_background_app`].
+    pub window_parked: bool,
     // Gupax-P2Pool API
     // Gupax's P2Pool API (e.g: ~/.local/share/gupax/p2pool/)
     // This is a file-based API that contains data for permanent stats.
@@ -413,9 +444,14 @@ impl App {
             p2pool_stdin: String::with_capacity(10),
             xmrig_stdin: String::with_capacity(10),
             xmrig_proxy_stdin: String::with_capacity(10),
-            resizing: false,
-            alpha: 0,
             no_startup: false,
+            daemon: false,
+            start_in_tray_flag: false,
+            window_state: WindowState::default(),
+            hide_close_pending: false,
+            last_window_size: None,
+            quit_phase: QuitPhase::default(),
+            window_parked: false,
             gupax_p2pool_api: arc_mut!(GupaxP2poolApi::new()),
             pub_sys,
             benchmarks,
@@ -788,6 +824,12 @@ impl App {
         #[cfg(target_os = "macos")]
         if app.exe.starts_with("/private") {
             app.error_state.set(format!("macOS thinks Gupax is a virus!\n(macOS has relocated Gupax for security reasons)\n\nThe directory: [{}]\nSince this is a private read-only directory, it causes issues with updates and correctly locating P2Pool/XMRig. Please move Gupax into the [Applications] directory, this lets macOS relax a little.\n", app.exe), ErrorFerris::Panic, ErrorButtons::Quit);
+        }
+        // An error stops the auto-start, so a [--tray] start shows the window
+        // with the error.
+        if app.error_state.error && app.window_state == WindowState::StartingInTray {
+            app.window_state = WindowState::Visible;
+            app.start_in_tray_flag = false;
         }
 
         info!("App ... OK");

@@ -273,7 +273,7 @@ impl Ping {
             handle.await?;
         }
         nodes = RemoteNodes(vec_nodes.lock().unwrap().to_vec());
-        nodes.sort_by(|a, b| a.ms.cmp(&b.ms));
+        nodes.sort_by_key(|node| node.ms);
         let fastest_info;
         if let Some(node) = nodes.first() {
             fastest_info = format!("Fastest node: {}ms ... {}", node.ms, node.ip);
