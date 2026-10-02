@@ -560,11 +560,90 @@ fn utc_date(timestamp: i64) -> String {
 //---------------------------------------------------------------------------------------------------- Tests
 #[cfg(test)]
 mod tests {
+    // Responses recorded from node2.monerodevs.org:18089 and mini.p2pool.observer
+    // on 2026-10-01 and 2026-10-02.
     use super::*;
+    use crate::constants::P2POOL_API_PATH_BLOCKS;
+    use mockito::Matcher;
+    use std::time::Instant;
 
     // Monero General Fund, which publishes its private view key.
     const ADDRESS: &str = "44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A";
     const VIEW_KEY: &str = "f359631075708155cc3d92a32b75a7d02a5dcf27756707b47a2b31b21c389501";
+    const HASH_3654400: &str = "ccdc3dada00723a548338fb86588999eb03a9ab0d6fb9bb74de1e9ec594e6808";
+    const HASH_3654401: &str = "5313b6628b27c6d48420393a86b941b4416f0cfa8b83af47b53edf46d6a11ed0";
+    // Block of the pool missing from the main chain.
+    const HASH_ORPHANED: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    fn payout_3654401() -> (String, AtomicUnit, u64) {
+        (
+            "2026-04-17 11:01:06.0000".to_string(),
+            AtomicUnit::from_u64(274561854),
+            3654401,
+        )
+    }
+
+    fn mock_observer(
+        server: &mut mockito::ServerGuard,
+        address: &str,
+        status: usize,
+        body: &str,
+    ) -> mockito::Mock {
+        server
+            .mock("GET", format!("/api/payouts/{address}").as_str())
+            .match_query(Matcher::UrlEncoded("limit".to_string(), "0".to_string()))
+            .match_header("user-agent", APP_USER_AGENT)
+            .with_status(status)
+            .with_body(body)
+            .create()
+    }
+
+    fn mock_rpc(
+        server: &mut mockito::ServerGuard,
+        method: &str,
+        params: serde_json::Value,
+        body: &str,
+    ) -> mockito::Mock {
+        server
+            .mock("POST", "/json_rpc")
+            .match_header("content-type", "application/json")
+            .match_body(Matcher::PartialJson(
+                json!({"method": method, "params": params}),
+            ))
+            .with_body(body)
+            .create()
+    }
+
+    // Synced node whose main chain holds the blocks 3,654,400 and 3,654,401.
+    fn mock_node(server: &mut mockito::ServerGuard) {
+        let info = include_str!("../../tests/fixtures/payouts/node_info.json");
+        mock_rpc(server, "get_info", json!({}), info);
+        for (height, body) in [
+            (
+                3654400,
+                include_str!("../../tests/fixtures/payouts/node_block_header_3654400.json"),
+            ),
+            (
+                3654401,
+                include_str!("../../tests/fixtures/payouts/node_block_header_3654401.json"),
+            ),
+        ] {
+            mock_rpc(
+                server,
+                "get_block_header_by_height",
+                json!({"height": height}),
+                body,
+            );
+        }
+    }
+
+    // Writes the blocks found by the pool in the P2Pool data API directory [dir].
+    fn write_found_blocks(dir: &Path, blocks: serde_json::Value) -> PathBuf {
+        let found_blocks = dir.join(P2POOL_API_PATH_BLOCKS);
+        std::fs::create_dir_all(found_blocks.parent().unwrap()).unwrap();
+        std::fs::write(&found_blocks, blocks.to_string()).unwrap();
+        found_blocks
+    }
 
     fn node(ip: &str, rpc: &str) -> Node {
         Node {
@@ -615,5 +694,274 @@ mod tests {
             error.to_string(),
             "the private view key does not belong to the P2Pool address"
         );
+    }
+
+    #[test]
+    fn removes_the_payouts_of_orphaned_blocks() {
+        let mut server = mockito::Server::new();
+        mock_node(&mut server);
+        let mut api = GupaxP2poolApi::temporary("removes_the_payouts_of_orphaned_blocks");
+        let dir = api.path_log.parent().unwrap().to_path_buf();
+        let found_blocks = write_found_blocks(
+            &dir,
+            json!([
+                {"height": 3654401, "hash": HASH_3654401},
+                {"height": 3654400, "hash": HASH_ORPHANED},
+            ]),
+        );
+        let payouts = [
+            (
+                "2026-04-17 10:59:38.0000".to_string(),
+                AtomicUnit::from_u64(1),
+                3654400,
+            ),
+            payout_3654401(),
+            // Found while P2Pool was stopped.
+            (
+                "2026-04-17 13:00:00.0000".to_string(),
+                AtomicUnit::from_u64(4),
+                3654500,
+            ),
+        ];
+        api.merge_payouts(&payouts).unwrap();
+        let api = Arc::new(Mutex::new(api));
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let client = client();
+        let node = server.url();
+
+        let removed = runtime
+            .block_on(remove_orphaned_payouts(&api, &client, &node, &found_blocks))
+            .unwrap();
+        assert_eq!(removed, 1);
+        // P2Pool did not find a block yet.
+        let missing = dir.join("missing");
+        let removed = runtime
+            .block_on(remove_orphaned_payouts(&api, &client, &node, &missing))
+            .unwrap();
+        assert_eq!(removed, 0);
+
+        let api = api.lock().unwrap();
+        assert_eq!(api.payout_u64, 2);
+        assert_eq!(api.xmr.to_u64(), 274561858);
+        assert!(!api.has_payout(3654400));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn keeps_a_payout_paid_again_at_the_same_height() {
+        let mut server = mockito::Server::new();
+        mock_node(&mut server);
+        let mut api = GupaxP2poolApi::temporary("keeps_a_payout_paid_again_at_the_same_height");
+        let dir = api.path_log.parent().unwrap().to_path_buf();
+        let found_blocks = write_found_blocks(
+            &dir,
+            json!([
+                {"height": 3654400, "hash": HASH_ORPHANED},
+                {"height": 3654400, "hash": HASH_3654400},
+            ]),
+        );
+        let payout = (
+            "2026-04-17 10:59:38.0000".to_string(),
+            AtomicUnit::from_u64(1),
+            3654400,
+        );
+        api.merge_payouts(&[payout]).unwrap();
+        let api = Arc::new(Mutex::new(api));
+
+        let removed = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(remove_orphaned_payouts(
+                &api,
+                &client(),
+                &server.url(),
+                &found_blocks,
+            ))
+            .unwrap();
+
+        assert_eq!(removed, 0);
+        assert!(api.lock().unwrap().has_payout(3654400));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn observer_payouts_of_an_address() {
+        let mut server = mockito::Server::new();
+        let general_fund =
+            include_str!("../../tests/fixtures/payouts/observer_payouts_general_fund.json");
+        let unknown = include_str!("../../tests/fixtures/payouts/observer_payouts_unknown.json");
+        mock_observer(&mut server, ADDRESS, 200, general_fund);
+        mock_observer(&mut server, "4AAAA", 404, unknown);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let client = client();
+
+        // A pasted URL may end with a slash and a line break.
+        let observer = format!("{}/ ", server.url());
+        let payouts = runtime
+            .block_on(observer_payouts(&client, &observer, ADDRESS))
+            .unwrap();
+        assert_eq!(payouts.len(), 21);
+        assert_eq!(payouts[0], payout_3654401());
+        let total: u64 = payouts.iter().map(|payout| payout.1.to_u64()).sum();
+        assert_eq!(total, 12828731759);
+
+        let error = runtime
+            .block_on(observer_payouts(&client, &server.url(), "4AAAA"))
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("404 Not Found"));
+    }
+
+    #[test]
+    fn view_key_scan_resumes_after_the_last_block() {
+        let mut server = mockito::Server::new();
+        let headers = mock_rpc(
+            &mut server,
+            "get_block_headers_range",
+            json!({"start_height": 3654400, "end_height": 3654402}),
+            include_str!("../../tests/fixtures/payouts/node_block_headers_3654400_3654402.json"),
+        )
+        .expect(1);
+        server
+            .mock("POST", "/get_transactions")
+            .match_header("content-type", "application/json")
+            .match_body(Matcher::PartialJson(json!({
+                "txs_hashes": [
+                    "a8c5318ba8a1b8531ff24bb4b79e2d4b7904269f04419543c6db93b773f6da54",
+                    "9a9adc7a5d78b3a0e96d61fcd035d0fe82ba7df85532000e3b9536cbf6134750",
+                    "6f79bacb782f43cdbe011074e5179c3aacf4ceaee5f7abb7e4d0c5fd6ebefc1d"
+                ],
+                "prune": true
+            })))
+            .with_body(include_str!(
+                "../../tests/fixtures/payouts/node_coinbases_3654400_3654402.json"
+            ))
+            .create();
+        let api = GupaxP2poolApi::temporary("view_key_scan_resumes_after_the_last_block");
+        api.write_scan(3700000, "4AAAA").unwrap();
+        api.write_scan(3654400, ADDRESS).unwrap();
+        let api = Arc::new(Mutex::new(api));
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let client = client();
+        let node = server.url();
+        // A node at height 3,654,463, so the block 3,654,402 is final.
+        let height = 3654463;
+
+        let mut results = Vec::new();
+        let scanned = scan(
+            &api,
+            &client,
+            &node,
+            height,
+            ADDRESS,
+            VIEW_KEY,
+            &mut results,
+        );
+        runtime.block_on(scanned).unwrap();
+        assert_eq!(results, ["Missing payouts added: 1"]);
+        {
+            let api = api.lock().unwrap();
+            assert_eq!(
+                api.log,
+                "2026-04-17 11:01:06.0000 | 0.000274561854 XMR | Block 3,654,401\n"
+            );
+            assert_eq!(api.read_scan(ADDRESS), Some(3654403));
+            assert_eq!(api.read_scan("4AAAA"), Some(3700000));
+        }
+
+        // The blocks are scanned once.
+        let mut results = Vec::new();
+        let scanned = scan(
+            &api,
+            &client,
+            &node,
+            height,
+            ADDRESS,
+            VIEW_KEY,
+            &mut results,
+        );
+        runtime.block_on(scanned).unwrap();
+        assert_eq!(results, ["Missing payouts added: 0"]);
+        headers.assert();
+        std::fs::remove_dir_all(api.lock().unwrap().path_log.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn sync_sources_priority() {
+        let mut server = mockito::Server::new();
+        let general_fund =
+            include_str!("../../tests/fixtures/payouts/observer_payouts_general_fund.json");
+        let observer = mock_observer(&mut server, ADDRESS, 200, general_fund).expect(1);
+        mock_node(&mut server);
+        let mut api = GupaxP2poolApi::temporary("sync_sources_priority");
+        let dir = api.path_log.parent().unwrap().to_path_buf();
+        api.address = ADDRESS.to_string();
+        api.found_blocks =
+            write_found_blocks(&dir, json!([{"height": 3654400, "hash": HASH_ORPHANED}]));
+        let orphaned = (
+            "2026-04-17 10:59:38.0000".to_string(),
+            AtomicUnit::from_u64(1),
+            3654400,
+        );
+        api.merge_payouts(&[orphaned]).unwrap();
+        let api = Arc::new(Mutex::new(api));
+        let host = server.host_with_port();
+        let (ip, rpc) = host.split_once(':').unwrap();
+        let node = node(ip, rpc);
+        let sources = |view_key: &str, observer: &str| {
+            let api = api.lock().unwrap();
+            SyncSources::new(
+                &api,
+                Some(&node),
+                view_key.to_string(),
+                observer.to_string(),
+            )
+        };
+
+        // The observer adds the missing payouts, then the orphaned one is removed.
+        sync(&api, &sources("", &server.url()));
+        assert_eq!(
+            api.lock().unwrap().sync,
+            "Missing payouts added: 21. Orphaned payouts removed: 1"
+        );
+        assert_eq!(api.lock().unwrap().payout_u64, 21);
+
+        // A filled view key is used before the observer.
+        let view_key = format!("01{}", "00".repeat(31));
+        sync(&api, &sources(&view_key, &server.url()));
+        assert_eq!(
+            api.lock().unwrap().sync,
+            "Sync error: the private view key does not belong to the P2Pool address. Orphaned payouts removed: 0"
+        );
+        observer.assert();
+
+        // Without view key and observer, only the orphaned payouts are checked.
+        sync(&api, &sources("", ""));
+        assert_eq!(api.lock().unwrap().sync, "Orphaned payouts removed: 0");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn stop_a_sync_waiting_for_the_node() {
+        // This node accepts connections and never answers.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut api = GupaxP2poolApi::temporary("stop_a_sync_waiting_for_the_node");
+        api.address = ADDRESS.to_string();
+        let node = node("127.0.0.1", &port.to_string());
+        let sources = SyncSources::new(&api, Some(&node), VIEW_KEY.to_string(), String::new());
+        let api = Arc::new(Mutex::new(api));
+
+        assert!(start(&mut api.lock().unwrap(), &api, sources));
+        // Let the request reach the node.
+        std::thread::sleep(Duration::from_millis(200));
+        api.lock().unwrap().stop_sync = true;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while api.lock().unwrap().syncing {
+            assert!(Instant::now() < deadline, "the sync did not stop");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let api = api.lock().unwrap();
+        assert_eq!(api.sync, "Stopped");
+        std::fs::remove_dir_all(api.path_log.parent().unwrap()).unwrap();
     }
 }
