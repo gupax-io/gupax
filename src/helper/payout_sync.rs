@@ -15,7 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Syncs the payout history: removes the payouts of orphaned blocks.
+//! Syncs the payout history: adds the payouts that Gupax did not see in the P2Pool output
+//! and removes the payouts of orphaned blocks.
 
 use std::{
     collections::HashSet,
@@ -25,23 +26,32 @@ use std::{
 };
 
 use log::*;
-use reqwest::header::CONTENT_TYPE;
+use reqwest::header::{CONTENT_TYPE, USER_AGENT};
 use reqwest_middleware::ClientWithMiddleware;
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
 
+use super::MONERO_BLOCK_TIME_IN_SECONDS;
 use crate::{
+    components::update::APP_USER_AGENT,
     constants::{P2POOL_PAYOUT_CHECK_DEPTH, SECOND},
     disk::{gupax_p2pool_api::GupaxP2poolApi, node::Node},
     miscs::client_with,
+    xmr::AtomicUnit,
 };
 
 // Time without data after which a request fails.
 // The largest requests of a sync started answering within 0.2 s from a remote node.
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
-// What the sync uses from the running P2Pool.
+// (date, atomic_unit, height) of each payout found.
+type Payouts = Vec<(String, AtomicUnit, u64)>;
+
+// The missing payouts are listed by the observer if set.
 pub struct SyncSources {
+    pub observer: String,
+    // Address P2Pool mines to.
+    pub address: String,
     // URL of the RPC of the node P2Pool uses.
     pub node: Option<String>,
     // File of the P2Pool data API listing the last blocks found by the pool.
@@ -49,8 +59,10 @@ pub struct SyncSources {
 }
 
 impl SyncSources {
-    pub fn new(api: &GupaxP2poolApi, node: Option<&Node>) -> Self {
+    pub fn new(api: &GupaxP2poolApi, node: Option<&Node>, observer: String) -> Self {
         Self {
+            observer,
+            address: api.address.clone(),
             node: node.map(|node| {
                 let ip = if node.ip.contains(':') {
                     format!("[{}]", node.ip)
@@ -61,6 +73,15 @@ impl SyncSources {
             }),
             found_blocks: api.found_blocks.clone(),
         }
+    }
+}
+
+// Address P2Pool pays: [subaddress] if set, else [wallet].
+pub fn payout_address(wallet: &str, subaddress: &str) -> String {
+    if subaddress.is_empty() {
+        wallet.to_string()
+    } else {
+        subaddress.to_string()
     }
 }
 
@@ -108,6 +129,13 @@ async fn run(
     results: &mut Vec<String>,
 ) {
     let client = client();
+    if !sources.observer.is_empty() {
+        let payouts = observer_payouts(&client, &sources.observer, &sources.address).await;
+        results.push(match payouts {
+            Ok(payouts) => merge(gupax_p2pool_api, &payouts),
+            Err(e) => format!("Sync error: {e:#}"),
+        });
+    }
     let node = synced_node(&client, sources.node.as_deref()).await;
     results.push(match &node {
         Ok(node) => {
@@ -129,6 +157,61 @@ fn client() -> ClientWithMiddleware {
             .build()
             .unwrap_or_default(),
     )
+}
+
+// Adds the missing [payouts] to the history and describes the result.
+fn merge(
+    gupax_p2pool_api: &Arc<Mutex<GupaxP2poolApi>>,
+    payouts: &[(String, AtomicUnit, u64)],
+) -> String {
+    match gupax_p2pool_api.lock().unwrap().merge_payouts(payouts) {
+        Ok(added) => format!("Missing payouts added: {added}"),
+        Err(e) => format!("Sync error: payout history write error: {e}"),
+    }
+}
+
+//---------------------------------------------------------------------------------------------------- Observer
+// This matches the payouts returned by the API of a P2Pool observer (excluding most fields).
+#[derive(Deserialize)]
+struct ObserverPayout {
+    main_height: u64,
+    timestamp: i64,
+    coinbase_reward: u64,
+}
+
+// Lists the final payouts of [address] known by [observer].
+async fn observer_payouts(
+    client: &ClientWithMiddleware,
+    observer: &str,
+    address: &str,
+) -> anyhow::Result<Payouts> {
+    let observer = observer.trim().trim_end_matches('/');
+    let url = if observer.contains("://") {
+        format!("{observer}/api/payouts/{address}?limit=0")
+    } else {
+        format!("https://{observer}/api/payouts/{address}?limit=0")
+    };
+    // Blocks found since then may still be orphaned.
+    let final_before = chrono::Utc::now().timestamp()
+        - (P2POOL_PAYOUT_CHECK_DEPTH * MONERO_BLOCK_TIME_IN_SECONDS) as i64;
+    Ok(client
+        .get(url)
+        .header(USER_AGENT, APP_USER_AGENT)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<Vec<ObserverPayout>>()
+        .await?
+        .into_iter()
+        .filter(|payout| payout.timestamp <= final_before)
+        .map(|payout| {
+            (
+                utc_date(payout.timestamp),
+                AtomicUnit::from_u64(payout.coinbase_reward),
+                payout.main_height,
+            )
+        })
+        .collect())
 }
 
 //---------------------------------------------------------------------------------------------------- Orphaned blocks
@@ -260,6 +343,15 @@ fn ensure_ok(status: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+//---------------------------------------------------------------------------------------------------- Common
+// Formats a timestamp like the dates of the P2Pool output.
+fn utc_date(timestamp: i64) -> String {
+    chrono::DateTime::from_timestamp(timestamp, 0).map_or_else(
+        || "????-??-?? ??:??:??.????".to_string(),
+        |date| date.format("%Y-%m-%d %H:%M:%S.0000").to_string(),
+    )
+}
+
 //---------------------------------------------------------------------------------------------------- Tests
 #[cfg(test)]
 mod tests {
@@ -276,8 +368,14 @@ mod tests {
     #[test]
     fn url_of_the_node() {
         let api = GupaxP2poolApi::new();
-        let url = |ip| SyncSources::new(&api, Some(&node(ip, "18081"))).node;
+        let url = |ip| SyncSources::new(&api, Some(&node(ip, "18081")), String::new()).node;
         assert_eq!(url("127.0.0.1").as_deref(), Some("http://127.0.0.1:18081"));
         assert_eq!(url("::1").as_deref(), Some("http://[::1]:18081"));
+    }
+
+    #[test]
+    fn address_paid_by_p2pool() {
+        assert_eq!(payout_address("4A", ""), "4A");
+        assert_eq!(payout_address("4A", "8B"), "8B");
     }
 }

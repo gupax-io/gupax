@@ -17,7 +17,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use egui::{Button, Label, RichText, ScrollArea, Separator, Slider, TextStyle};
+use egui::{Button, Label, RichText, ScrollArea, Separator, Slider, TextEdit, TextStyle};
 use readable::num::Unsigned;
 use strum::{EnumCount, IntoEnumIterator};
 
@@ -41,6 +41,7 @@ impl Status {
         gupax_p2pool_api: &Arc<Mutex<GupaxP2poolApi>>,
         p2pool_alive: bool,
         p2pool_api: &Arc<Mutex<PubP2poolApi>>,
+        observer: &mut String,
     ) {
         let mut api = gupax_p2pool_api.lock().unwrap();
         // let height = size.y;
@@ -123,13 +124,22 @@ impl Status {
             // Payouts sync
             ui.group(|ui| {
                 ui.horizontal(|ui| {
+                    ui.label("Observer");
+                    ui.add(
+                        TextEdit::singleline(observer)
+                            .hint_text("nano.p2pool.observer")
+                            .desired_width(ui.available_width() / 3.0),
+                    )
+                    .on_hover_text(STATUS_SUBMENU_OBSERVER);
+                });
+                ui.horizontal(|ui| {
                     if ui
                         .add_enabled(!api.syncing && p2pool_alive, Button::new("Refresh"))
                         .on_hover_text(STATUS_SUBMENU_REFRESH)
                         .clicked()
                     {
                         let node = p2pool_api.lock().unwrap().current_node.clone();
-                        let sources = SyncSources::new(&api, node.as_ref());
+                        let sources = SyncSources::new(&api, node.as_ref(), observer.clone());
                         payout_sync::start(&mut api, gupax_p2pool_api, sources);
                     }
                     if api.syncing {

@@ -1,11 +1,18 @@
 //---------------------------------------------------------------------------------------------------- TESTS
 #[cfg(test)]
 mod test {
-    use crate::disk::consts::GUPAX_P2POOL_API_DIRECTORY;
-    use crate::disk::create_gupax_dir;
     use crate::disk::node::Node;
     use crate::disk::pool::Pool;
     use crate::disk::state::State;
+    #[test]
+    fn state_of_the_previous_release() {
+        let state = State::to_string(&State::new()).unwrap();
+        let previous = state.replace("observer = \"\"\n", "");
+        assert_ne!(previous, state);
+        // The version check reads the state before any merge.
+        assert!(State::from_str(&previous).is_ok());
+    }
+
     #[test]
     fn serde_default_state() {
         let state = State::new();
@@ -158,23 +165,16 @@ mod test {
         use crate::xmr::AtomicUnit;
         use crate::xmr::PayoutOrd;
 
-        // Get API dir, fill paths.
-        let mut api = GupaxP2poolApi::new();
-        let mut path = crate::disk::get_gupax_data_path().unwrap();
-        create_gupax_dir(&path).unwrap();
-        let mut gupax_p2pool_dir = path.to_path_buf();
-        gupax_p2pool_dir.push(GUPAX_P2POOL_API_DIRECTORY);
-        crate::disk::create_gupax_p2pool_dir(&gupax_p2pool_dir).unwrap();
-        path.push(crate::disk::GUPAX_P2POOL_API_DIRECTORY);
-        GupaxP2poolApi::fill_paths(&mut api, &path);
+        // Create the files.
+        let mut api = GupaxP2poolApi::temporary("create_and_serde_gupax_p2pool_api");
         println!("{:#?}", api);
 
-        // Create, write some fake data.
-        GupaxP2poolApi::create_all_files(&path).unwrap();
+        // Write some fake data.
         api.log        = "NOTICE  2022-01-27 01:30:23.1377 P2Pool You received a payout of 0.000000000001 XMR in block 2642816".to_string();
         api.payout_u64 = 1;
         api.xmr = AtomicUnit::from_u64(2);
-        let (date, atomic_unit, block) = PayoutOrd::parse_raw_payout_line(&api.log);
+        let (date, atomic_unit, height) = PayoutOrd::parse_raw_payout_line(&api.log);
+        let block = crate::human::HumanNumber::from_u64(height.unwrap());
         let formatted_log_line = GupaxP2poolApi::format_payout(&date, &atomic_unit, &block);
         GupaxP2poolApi::write_to_all_files(&api, &formatted_log_line).unwrap();
         println!("AFTER WRITE: {:#?}", api);
@@ -191,6 +191,7 @@ mod test {
             api.log
                 .contains("2022-01-27 01:30:23.1377 | 0.000000000001 XMR | Block 2,642,816")
         );
+        std::fs::remove_dir_all(api.path_log.parent().unwrap()).unwrap();
     }
 
     #[test]
@@ -251,6 +252,7 @@ mod test {
     #[test]
     fn remove_orphaned_payouts() {
         use crate::disk::gupax_p2pool_api::GupaxP2poolApi;
+        use crate::human::HumanNumber;
         use crate::xmr::PayoutOrd;
 
         let mut api = GupaxP2poolApi::temporary("remove_orphaned_payouts");
@@ -258,7 +260,8 @@ mod test {
             let line = format!(
                 "NOTICE  2026-10-01 10:00:00.0000 P2Pool Your wallet 4AAA got a payout of {xmr} XMR in block {height}"
             );
-            let (date, atomic_unit, block) = PayoutOrd::parse_raw_payout_line(&line);
+            let (date, atomic_unit, height) = PayoutOrd::parse_raw_payout_line(&line);
+            let block = HumanNumber::from_u64(height.unwrap());
             let formatted_log_line = GupaxP2poolApi::format_payout(&date, &atomic_unit, &block);
             api.add_payout(&formatted_log_line, date, atomic_unit, block);
             api.write_to_all_files(&formatted_log_line).unwrap();
@@ -280,6 +283,49 @@ mod test {
             api.log,
             "2026-10-01 10:00:00.0000 | 0.000000000002 XMR | Block 3,500,001\n\
              2026-10-01 10:00:00.0000 | 0.000000000003 XMR | Block 3,500,002\n"
+        );
+        std::fs::remove_dir_all(api.path_log.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn merge_synced_payouts() {
+        use crate::disk::gupax_p2pool_api::GupaxP2poolApi;
+        use crate::human::HumanNumber;
+        use crate::xmr::AtomicUnit;
+
+        let mut api = GupaxP2poolApi::temporary("merge_synced_payouts");
+        // Payout seen in the P2Pool output.
+        let date = "2026-10-01 10:00:00.1234".to_string();
+        let atomic_unit = AtomicUnit::from_u64(2);
+        let block = HumanNumber::from_u64(3500001);
+        let formatted_log_line = GupaxP2poolApi::format_payout(&date, &atomic_unit, &block);
+        api.add_payout(&formatted_log_line, date, atomic_unit, block);
+        api.write_to_all_files(&formatted_log_line).unwrap();
+        assert!(api.has_payout(3500001));
+
+        // The synced payouts include it and an older one.
+        let payouts = [
+            (
+                "2026-10-01 10:00:00.0000".to_string(),
+                AtomicUnit::from_u64(2),
+                3500001,
+            ),
+            (
+                "2026-09-30 10:00:00.0000".to_string(),
+                AtomicUnit::from_u64(5),
+                3499000,
+            ),
+        ];
+        assert_eq!(api.merge_payouts(&payouts).unwrap(), 1);
+        assert_eq!(api.merge_payouts(&payouts).unwrap(), 0);
+
+        api.read_all_files_and_update().unwrap();
+        assert_eq!(api.payout_u64, 2);
+        assert_eq!(api.xmr.to_u64(), 7);
+        assert_eq!(
+            api.log,
+            "2026-09-30 10:00:00.0000 | 0.000000000005 XMR | Block 3,499,000\n\
+             2026-10-01 10:00:00.1234 | 0.000000000002 XMR | Block 3,500,001\n"
         );
         std::fs::remove_dir_all(api.path_log.parent().unwrap()).unwrap();
     }

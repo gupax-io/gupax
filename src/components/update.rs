@@ -83,7 +83,7 @@ pub(super) const ARCH_TARGET: &str = "x64";
 #[cfg(target_arch = "aarch64")]
 pub(super) const ARCH_TARGET: &str = "arm64";
 // https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api?apiVersion=2022-11-28#user-agent
-const APP_USER_AGENT: &str = "GUPAX";
+pub const APP_USER_AGENT: &str = "GUPAX";
 const MSG_NONE: &str = "No update in progress";
 
 //---------------------------------------------------------------------------------------------------- General functions

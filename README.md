@@ -94,7 +94,7 @@ This tab has three sub-menus. By default the `Processes` sub-menu will appear.
 Monitoring of every services, as well as displaying resources usage of the system. You can hide the column of a service in the Settings tab.
 ![Processes Tab](assets/images/tabs/processes.png)
 #### Payouts
-You can see rewards that you were paid. Gupax removes the payouts of orphaned blocks. You also have a tool to calculate rewards based on your hashrate. The calculator needs P2Pool to be synced so it has the needed data up to date.
+You can see rewards that you were paid. Gupax removes the payouts of orphaned blocks and, automatically or with the `Refresh` button, adds the missing payouts listed by a P2Pool observer. You also have a tool to calculate rewards based on your hashrate. The calculator needs P2Pool to be synced so it has the needed data up to date.
 ![Payouts Tab](assets/images/tabs/payouts.png)
 #### Benchmarks
 You can compare your CPU hashrate to the other CPUs of the same model, or even to other models.

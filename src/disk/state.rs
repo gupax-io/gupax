@@ -525,6 +525,8 @@ pub struct P2pool {
     pub prefer_local_node: bool,
     pub console_height: u32,
     pub crawl_settings: CrawlerRequirements,
+    #[serde(default)]
+    pub observer: String,
 }
 
 // compatible for P2Pool and Xmrig/Proxy
@@ -796,6 +798,7 @@ impl Default for P2pool {
             prefer_local_node: true,
             console_height: APP_DEFAULT_CONSOLE_HEIGHT,
             crawl_settings: CrawlerRequirements::default(),
+            observer: String::new(),
         }
     }
 }

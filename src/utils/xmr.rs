@@ -155,7 +155,7 @@ impl PayoutOrd {
     }
 
     // Expected input: "NOTICE  2022-01-27 01:30:23.1377 P2Pool You received a payout of 0.000000000001 XMR in block 2642816"
-    pub fn parse_raw_payout_line(line: &str) -> (String, AtomicUnit, HumanNumber) {
+    pub fn parse_raw_payout_line(line: &str) -> (String, AtomicUnit, Option<u64>) {
         // Date
         let date = match P2POOL_REGEX.date.find(line) {
             Some(date) => date.as_str().to_string(),
@@ -186,19 +186,19 @@ impl PayoutOrd {
         let block = if let Some(word) = P2POOL_REGEX.block.find(line) {
             if let Some(word) = P2POOL_REGEX.block_int.find(word.as_str()) {
                 match word.as_str().parse::<u64>() {
-                    Ok(b) => HumanNumber::from_u64(b),
+                    Ok(b) => Some(b),
                     Err(e) => {
                         error!("P2Pool | Block parse error: [{e}] on [{line}]");
-                        HumanNumber::unknown()
+                        None
                     }
                 }
             } else {
                 error!("P2Pool | Block parse error: [{line}]");
-                HumanNumber::unknown()
+                None
             }
         } else {
             error!("P2Pool | Block parse error: [{line}]");
-            HumanNumber::unknown()
+            None
         };
         (date, atomic_unit, block)
     }

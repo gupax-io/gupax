@@ -34,6 +34,8 @@ pub struct GupaxP2poolApi {
     pub syncing: bool,
     pub stop_sync: bool,
     pub found_blocks: PathBuf, // Blocks found by the pool, in the data API of the running P2Pool
+    pub address: String,       // Address the running P2Pool pays
+    pub observer: String,      // Observer set when P2Pool started, used by the automatic sync
 }
 
 impl Default for GupaxP2poolApi {
@@ -61,6 +63,8 @@ impl GupaxP2poolApi {
             syncing: false,
             stop_sync: false,
             found_blocks: PathBuf::new(),
+            address: String::new(),
+            observer: String::new(),
         }
     }
 
@@ -237,6 +241,12 @@ impl GupaxP2poolApi {
         line.rsplit_once("Block ")?.1.replace(',', "").parse().ok()
     }
 
+    pub fn has_payout(&self, height: u64) -> bool {
+        self.log
+            .lines()
+            .any(|line| Self::payout_height(line) == Some(height))
+    }
+
     // Removes the payouts received in the blocks at [heights] and updates [self] and the files.
     // Returns the number of payouts removed.
     pub fn remove_payouts(&mut self, heights: &[u64]) -> Result<u64, TomlError> {
@@ -260,6 +270,36 @@ impl GupaxP2poolApi {
         Ok(removed)
     }
 
+    // Adds the (date, atomic_unit, height) payouts of blocks missing from the history,
+    // updates [self] and the files. Returns the number of payouts added.
+    pub fn merge_payouts(
+        &mut self,
+        payouts: &[(String, AtomicUnit, u64)],
+    ) -> Result<u64, TomlError> {
+        if payouts.is_empty() {
+            return Ok(0);
+        }
+        // Another Gupax may have changed the files.
+        self.read_all_files_and_update()?;
+        let mut heights: std::collections::HashSet<u64> =
+            self.log.lines().filter_map(Self::payout_height).collect();
+        let mut lines: Vec<String> = self.log.lines().map(String::from).collect();
+        let mut added = 0;
+        for (date, atomic_unit, height) in payouts {
+            if heights.insert(*height) {
+                let block = HumanNumber::from_u64(*height);
+                lines.push(Self::format_payout(date, atomic_unit, &block));
+                added += 1;
+            }
+        }
+        if added > 0 {
+            // Each line starts with its date.
+            lines.sort();
+            self.rewrite(&lines)?;
+        }
+        Ok(added)
+    }
+
     // Replaces the history with [lines] and the totals with the totals of [lines].
     fn rewrite(&mut self, lines: &[String]) -> Result<(), TomlError> {
         let log: String = lines.iter().map(|line| format!("{line}\n")).collect();
@@ -272,10 +312,11 @@ impl GupaxP2poolApi {
         self.read_all_files_and_update()
     }
 
+    // Writes the log first, so a payout counted in the totals is in the log.
     pub fn write_to_all_files(&self, formatted_log_line: &str) -> Result<(), TomlError> {
+        Self::disk_append(formatted_log_line, &self.path_log)?;
         Self::disk_overwrite(&self.payout_u64.to_string(), &self.path_payout)?;
         Self::disk_overwrite(&self.xmr.to_string(), &self.path_xmr)?;
-        Self::disk_append(formatted_log_line, &self.path_log)?;
         Ok(())
     }
 

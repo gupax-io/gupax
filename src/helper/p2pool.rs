@@ -176,16 +176,20 @@ impl Helper {
             //			println!("{}", line); // For debugging.
             if P2POOL_REGEX.payout.is_match(&line) {
                 debug!("P2Pool PTY | Found payout, attempting write: {line}");
-                let (date, atomic_unit, block) = PayoutOrd::parse_raw_payout_line(&line);
+                let (date, atomic_unit, height) = PayoutOrd::parse_raw_payout_line(&line);
+                let block = height.map_or_else(HumanNumber::unknown, HumanNumber::from_u64);
                 let formatted_log_line = GupaxP2poolApi::format_payout(&date, &atomic_unit, &block);
                 // Hold the lock for both steps, a sync rewrites the history.
                 let mut api = gupax_p2pool_api.lock().unwrap();
-                api.add_payout(&formatted_log_line, date, atomic_unit, block);
-                if let Err(e) = api.write_to_all_files(&formatted_log_line) {
-                    error!("P2Pool PTY GupaxP2poolApi | Write error: {e}");
+                // A sync may have added this payout already.
+                if !height.is_some_and(|height| api.has_payout(height)) {
+                    api.add_payout(&formatted_log_line, date, atomic_unit, block);
+                    if let Err(e) = api.write_to_all_files(&formatted_log_line) {
+                        error!("P2Pool PTY GupaxP2poolApi | Write error: {e}");
+                    }
                 }
             }
-            // The blocks found before by the pool may have been orphaned since.
+            // Earlier payouts may have become final or been orphaned since.
             if line.contains("BLOCK FOUND") && process.lock().unwrap().state == ProcessState::Alive
             {
                 Self::start_payout_sync(&gui_api, &gupax_p2pool_api);
@@ -205,7 +209,7 @@ impl Helper {
     ) {
         let node = gui_api.lock().unwrap().current_node.clone();
         let mut api = gupax_p2pool_api.lock().unwrap();
-        let sources = SyncSources::new(&api, node.as_ref());
+        let sources = SyncSources::new(&api, node.as_ref(), api.observer.clone());
         payout_sync::start(&mut api, gupax_p2pool_api, sources);
     }
     //---------------------------------------------------------------------------------------------------- P2Pool specific
@@ -413,7 +417,7 @@ impl Helper {
         let mut api_path = path.to_path_buf();
         api_path.pop();
         let simple = state.submenu != SubmenuP2pool::Advanced;
-        if simple {
+        let address = if simple {
             *helper.lock().unwrap().img_p2pool.lock().unwrap() = ImgP2pool {
                 chain: P2poolChain::Nano.to_string(),
                 address: Self::head_tail_of_monero_address(&state.address),
@@ -421,10 +425,12 @@ impl Helper {
                 in_peers: "10".to_string(),
                 stratum_port: P2POOL_PORT_DEFAULT,
             };
+            state.address.clone()
         } else if !state.arguments.is_empty() {
             // This parses the input and attempts to fill out
             // the [ImgP2pool]... This is pretty bad code...
             let mut last = "";
+            let (mut wallet, mut subaddress) = ("", "");
             let lock = helper.lock().unwrap();
             let mut p2pool_image = lock.img_p2pool.lock().unwrap();
             let mut chain = P2poolChain::Main;
@@ -440,7 +446,11 @@ impl Helper {
                         chain = P2poolChain::Nano;
                         p2pool_image.chain = chain.to_string();
                     }
-                    "--wallet" => p2pool_image.address = Self::head_tail_of_monero_address(arg),
+                    "--wallet" => {
+                        p2pool_image.address = Self::head_tail_of_monero_address(arg);
+                        wallet = arg;
+                    }
+                    "--subaddress" => subaddress = arg,
                     "--out-peers" => p2pool_image.out_peers = arg.to_string(),
                     "--in-peers" => p2pool_image.in_peers = arg.to_string(),
                     "--data-api" => api_path = path.parent().unwrap_or(path).join(arg),
@@ -458,6 +468,7 @@ impl Helper {
                 let arg = if arg == "localhost" { "127.0.0.1" } else { arg };
                 last = arg;
             }
+            payout_sync::payout_address(wallet, subaddress)
         } else {
             *helper.lock().unwrap().img_p2pool.lock().unwrap() = ImgP2pool {
                 chain: state.chain.to_string(),
@@ -466,10 +477,14 @@ impl Helper {
                 out_peers: state.out_peers.to_string(),
                 in_peers: state.in_peers.to_string(),
             };
-        }
+            state.address.clone()
+        };
         // Sources of the payout sync.
         let gupax_p2pool_api = Arc::clone(&helper.lock().unwrap().gupax_p2pool_api);
-        gupax_p2pool_api.lock().unwrap().found_blocks = api_path.join(P2POOL_API_PATH_BLOCKS);
+        let mut api = gupax_p2pool_api.lock().unwrap();
+        api.address = address;
+        api.observer.clone_from(&state.observer);
+        api.found_blocks = api_path.join(P2POOL_API_PATH_BLOCKS);
         let mut api_path_local = api_path.clone();
         let mut api_path_network = api_path.clone();
         let mut api_path_pool = api_path.clone();

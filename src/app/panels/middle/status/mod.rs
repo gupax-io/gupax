@@ -54,6 +54,7 @@ impl Status {
         max_threads: u16,
         gupax_p2pool_api: &Arc<Mutex<GupaxP2poolApi>>,
         benchmarks: &[Benchmark],
+        observer: &mut String,
         ui: &mut egui::Ui,
     ) {
         //---------------------------------------------------------------------------------------------------- [Processes]
@@ -79,6 +80,7 @@ impl Status {
                 gupax_p2pool_api,
                 states.find(ProcessName::P2pool).state == ProcessState::Alive,
                 p2pool_api,
+                observer,
             );
         //---------------------------------------------------------------------------------------------------- [Benchmarks]
         } else if self.submenu == SubmenuStatus::Benchmarks {
