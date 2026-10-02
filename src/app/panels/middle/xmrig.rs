@@ -35,6 +35,33 @@ use std::sync::{Arc, Mutex};
 use super::common::list_poolnode::PoolNode;
 use super::common::state_edit_field::StateTextEdit;
 
+const XMRIG_DAEMON_HTTP: &str = "daemon+http://";
+const XMRIG_DAEMON_HTTPS: &str = "daemon+https://";
+
+fn strip_daemon_scheme(ip: &str) -> &str {
+    ip.strip_prefix(XMRIG_DAEMON_HTTP)
+        .or_else(|| ip.strip_prefix(XMRIG_DAEMON_HTTPS))
+        .unwrap_or(ip)
+}
+
+fn is_daemon_rpc(ip: &str) -> bool {
+    ip.starts_with(XMRIG_DAEMON_HTTP) || ip.starts_with(XMRIG_DAEMON_HTTPS)
+}
+
+fn set_daemon_rpc(ip: &mut String, enabled: bool) {
+    let host = strip_daemon_scheme(ip).to_string();
+    if enabled {
+        *ip = format!("{XMRIG_DAEMON_HTTP}{host}");
+    } else {
+        *ip = host;
+    }
+}
+
+fn valid_xmrig_endpoint(ip: &str) -> bool {
+    let host = strip_daemon_scheme(ip);
+    REGEXES.ipv4.is_match(host) || REGEXES.domain.is_match(host)
+}
+
 impl Xmrig {
     #[inline(always)] // called once
     #[allow(clippy::too_many_arguments)]
@@ -166,24 +193,43 @@ impl Xmrig {
                                 ui.separator();
                                 debug!("XMRig Tab | Rendering [TLS/Keepalive] buttons");
                                 ui.vertical(|ui| {
-                                    // TLS/Keepalive
-                                    ui.horizontal(|ui| {
-                                        let width = (ui.available_width() / 2.0) - 11.0;
-                                        let height =
-                                            height_txt_before_button(ui, &egui::TextStyle::Button)
-                                                * 2.0;
-                                        let size = vec2(width, height);
-                                        ui.add_sized(
-                                            size,
-                                            Checkbox::new(&mut self.tls, "TLS Connection"),
+                                    let mut daemon_rpc = is_daemon_rpc(&self.ip);
+                                    if ui
+                                        .checkbox(&mut daemon_rpc, "Solo mining")
+                                        .on_hover_text(
+                                            "Connect XMRig directly to a Monero daemon instead of a Stratum pool.",
                                         )
-                                        .on_hover_text(XMRIG_TLS);
-                                        ui.separator();
-                                        ui.add_sized(
-                                            size,
-                                            Checkbox::new(&mut self.keepalive, "Keepalive"),
-                                        )
-                                        .on_hover_text(XMRIG_KEEPALIVE);
+                                        .changed()
+                                    {
+                                        set_daemon_rpc(&mut self.ip, daemon_rpc);
+                                        if daemon_rpc {
+                                            self.tls = false;
+                                            self.keepalive = false;
+                                        }
+                                    }
+
+                                    // TLS/Keepalive are pool-specific options. XMRig's
+                                    // daemon+http(s) URL scheme selects daemon RPC mode.
+                                    ui.add_enabled_ui(!daemon_rpc, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let width = (ui.available_width() / 2.0) - 11.0;
+                                            let height = height_txt_before_button(
+                                                ui,
+                                                &egui::TextStyle::Button,
+                                            ) * 2.0;
+                                            let size = vec2(width, height);
+                                            ui.add_sized(
+                                                size,
+                                                Checkbox::new(&mut self.tls, "TLS Connection"),
+                                            )
+                                            .on_hover_text(XMRIG_TLS);
+                                            ui.separator();
+                                            ui.add_sized(
+                                                size,
+                                                Checkbox::new(&mut self.keepalive, "Keepalive"),
+                                            )
+                                            .on_hover_text(XMRIG_KEEPALIVE);
+                                        });
                                     });
                                 });
                             });
@@ -213,7 +259,7 @@ impl Xmrig {
             .description(" IP        ")
             .max_ch(255)
             .help_msg(XMRIG_IP)
-            .validations(&[|x| REGEXES.ipv4.is_match(x) || REGEXES.domain.is_match(x)])
+            .validations(&[valid_xmrig_endpoint])
             .build(ui, &mut self.ip)
     }
     fn rig_field(&mut self, ui: &mut Ui) -> bool {
@@ -245,5 +291,43 @@ impl Xmrig {
             .max_ch(255)
             .help_msg(XMRIG_API_TOKEN)
             .build(ui, &mut self.token)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helper::Helper;
+
+    #[test]
+    fn daemon_rpc_endpoint_round_trip() {
+        let mut ip = "127.0.0.1".to_string();
+        set_daemon_rpc(&mut ip, true);
+        assert_eq!(ip, "daemon+http://127.0.0.1");
+        assert!(is_daemon_rpc(&ip));
+
+        set_daemon_rpc(&mut ip, false);
+        assert_eq!(ip, "127.0.0.1");
+        assert!(!is_daemon_rpc(&ip));
+    }
+
+    #[test]
+    fn daemon_rpc_endpoint_is_valid() {
+        assert!(valid_xmrig_endpoint("daemon+http://127.0.0.1"));
+        assert!(valid_xmrig_endpoint("daemon+https://node.example.com"));
+        assert!(!valid_xmrig_endpoint("daemon+http://not a host"));
+    }
+
+    #[test]
+    fn daemon_rpc_scheme_reaches_xmrig_url() {
+        let mut state = Xmrig::default();
+        state.simple = false;
+        state.ip = "daemon+http://127.0.0.1".to_string();
+        state.port = "18081".to_string();
+
+        let args = Helper::build_xmrig_args(&state, StartOptionsMode::Advanced, 3333);
+        assert!(args.windows(2).any(|pair| {
+            pair[0] == "--url" && pair[1] == "daemon+http://127.0.0.1:18081"
+        }));
     }
 }
