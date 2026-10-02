@@ -17,14 +17,18 @@
 
 use std::sync::{Arc, Mutex};
 
-use egui::{Button, Label, RichText, ScrollArea, Separator, Slider, TextEdit, TextStyle};
+use egui::{
+    Button, Label, RichText, ScrollArea, Separator, Slider, TextEdit, TextStyle, ViewportCommand,
+    text::{CCursor, CCursorRange},
+};
 use readable::num::Unsigned;
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::{
+    components::gupax::{FileType, FileWindow},
     disk::{
         gupax_p2pool_api::GupaxP2poolApi,
-        state::Status,
+        state::{Gupax, Status},
         status::{Hash, PayoutView},
     },
     helper::{
@@ -42,6 +46,7 @@ impl Status {
         p2pool_alive: bool,
         p2pool_api: &Arc<Mutex<PubP2poolApi>>,
         observer: &mut String,
+        file_window: &Arc<Mutex<FileWindow>>,
     ) {
         let mut api = gupax_p2pool_api.lock().unwrap();
         // let height = size.y;
@@ -133,13 +138,65 @@ impl Status {
                     .on_hover_text(STATUS_SUBMENU_OBSERVER);
                 });
                 ui.horizontal(|ui| {
+                    ui.add_sized([0.0, height], Label::new("Private view key"));
+                    let key = ui
+                        .add(
+                            TextEdit::singleline(&mut api.view_key)
+                                .password(true)
+                                .desired_width(ui.available_width() / 3.0),
+                        )
+                        .on_hover_text(STATUS_SUBMENU_VIEW_KEY);
+                    if ui
+                        .button("Paste")
+                        .on_hover_text(STATUS_SUBMENU_PASTE_VIEW_KEY)
+                        .clicked()
+                    {
+                        // The clipboard content arrives as a paste event in the next frame
+                        // and replaces the selected key.
+                        let mut state = TextEdit::load_state(ui.ctx(), key.id).unwrap_or_default();
+                        let end = CCursor::new(api.view_key.chars().count());
+                        state
+                            .cursor
+                            .set_char_range(Some(CCursorRange::two(CCursor::new(0), end)));
+                        state.store(ui.ctx(), key.id);
+                        key.request_focus();
+                        ui.ctx().send_viewport_cmd(ViewportCommand::RequestPaste);
+                    }
+                    let window_busy = file_window.lock().unwrap().thread;
+                    if ui
+                        .add_enabled(!window_busy, Button::new("File"))
+                        .on_hover_text(STATUS_SUBMENU_FILE_VIEW_KEY)
+                        .clicked()
+                    {
+                        Gupax::spawn_file_window_thread(file_window, FileType::ViewKey);
+                    }
+                    let mut file_window = file_window.lock().unwrap();
+                    if file_window.picked_view_key {
+                        file_window.picked_view_key = false;
+                        // The first 64 hexadecimal characters, as in the output of
+                        // monero-wallet-cli where the private key comes first.
+                        let key = std::fs::read_to_string(&file_window.view_key_path).map(|file| {
+                            file.split(|c: char| !c.is_ascii_hexdigit())
+                                .find(|word| word.len() == 64)
+                                .map(String::from)
+                        });
+                        match key {
+                            Ok(Some(key)) => api.view_key = key,
+                            Ok(None) => api.sync = "View key file: no key found".to_string(),
+                            Err(e) => api.sync = format!("View key file read error: {e}"),
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
                     if ui
                         .add_enabled(!api.syncing && p2pool_alive, Button::new("Refresh"))
                         .on_hover_text(STATUS_SUBMENU_REFRESH)
                         .clicked()
                     {
                         let node = p2pool_api.lock().unwrap().current_node.clone();
-                        let sources = SyncSources::new(&api, node.as_ref(), observer.clone());
+                        let view_key = api.view_key.clone();
+                        let sources =
+                            SyncSources::new(&api, node.as_ref(), view_key, observer.clone());
                         payout_sync::start(&mut api, gupax_p2pool_api, sources);
                     }
                     if api.syncing {

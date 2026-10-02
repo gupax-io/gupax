@@ -34,11 +34,13 @@ pub struct FileWindow {
     pub picked_xp: bool,          // Did the user pick a path for xmrig-proxy?
     pub picked_node: bool,        // Did the user pick a path for node?
     pub picked_nodedb: bool,      // Did the user pick a path for node?
+    pub picked_view_key: bool,    // Did the user pick a file for the private view key?
     pub p2pool_path: String,      // The picked p2pool path
     pub node_path: String,        // The picked node path
     pub nodedb_path: String,      // The picked node path
     pub xmrig_path: String,       // The picked xmrig path
     pub xmrig_proxy_path: String, // The picked xmrig-proxy path
+    pub view_key_path: String,    // The picked private view key path
 }
 
 impl FileWindow {
@@ -50,11 +52,13 @@ impl FileWindow {
             picked_xp: false,
             picked_node: false,
             picked_nodedb: false,
+            picked_view_key: false,
             p2pool_path: String::new(),
             node_path: String::new(),
             nodedb_path: String::new(),
             xmrig_path: String::new(),
             xmrig_proxy_path: String::new(),
+            view_key_path: String::new(),
         })
     }
 }
@@ -66,6 +70,7 @@ pub enum FileType {
     XmrigProxy,
     Node,
     NodeDB,
+    ViewKey,
 }
 
 //---------------------------------------------------------------------------------------------------- Ratio Lock
@@ -106,6 +111,7 @@ impl Gupax {
             XmrigProxy => "XMRigProxy",
             Node => "Node",
             NodeDB => "Node DB",
+            ViewKey => "private view key",
         };
         let file_window = file_window.clone();
         file_window.lock().unwrap().thread = true;
@@ -114,6 +120,9 @@ impl Gupax {
                 NodeDB => rfd::FileDialog::new()
                     .set_title("Select a directory for the DB of your Node")
                     .pick_folder(),
+                ViewKey => rfd::FileDialog::new()
+                    .set_title("Select the file of your private view key")
+                    .pick_file(),
                 _ => rfd::FileDialog::new()
                     .set_title(format!("Select {name} Binary for Gupax"))
                     .pick_file(),
@@ -140,6 +149,10 @@ impl Gupax {
                     NodeDB => {
                         file_window.lock().unwrap().nodedb_path = path.display().to_string();
                         file_window.lock().unwrap().picked_nodedb = true;
+                    }
+                    ViewKey => {
+                        file_window.lock().unwrap().view_key_path = path.display().to_string();
+                        file_window.lock().unwrap().picked_view_key = true;
                     }
                 };
             } else {

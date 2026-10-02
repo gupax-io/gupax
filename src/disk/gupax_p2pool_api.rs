@@ -30,12 +30,14 @@ pub struct GupaxP2poolApi {
     pub path_log: PathBuf,  // Path to [log]
     pub path_payout: PathBuf, // Path to [payout]
     pub path_xmr: PathBuf,  // Path to [xmr]
+    pub path_scan: PathBuf, // Path to [scan]
     pub sync: String,       // Result of the last payouts sync
     pub syncing: bool,
     pub stop_sync: bool,
     pub found_blocks: PathBuf, // Blocks found by the pool, in the data API of the running P2Pool
     pub address: String,       // Address the running P2Pool pays
     pub observer: String,      // Observer set when P2Pool started, used by the automatic sync
+    pub view_key: String,      // Private view key used to sync the payouts, kept in memory only
 }
 
 impl Default for GupaxP2poolApi {
@@ -59,12 +61,14 @@ impl GupaxP2poolApi {
             path_xmr: PathBuf::new(),
             path_payout: PathBuf::new(),
             path_log: PathBuf::new(),
+            path_scan: PathBuf::new(),
             sync: String::new(),
             syncing: false,
             stop_sync: false,
             found_blocks: PathBuf::new(),
             address: String::new(),
             observer: String::new(),
+            view_key: String::new(),
         }
     }
 
@@ -85,13 +89,16 @@ impl GupaxP2poolApi {
         let mut path_log = gupax_p2pool_dir.to_path_buf();
         let mut path_payout = gupax_p2pool_dir.to_path_buf();
         let mut path_xmr = gupax_p2pool_dir.to_path_buf();
+        let mut path_scan = gupax_p2pool_dir.to_path_buf();
         path_log.push(GUPAX_P2POOL_API_LOG);
         path_payout.push(GUPAX_P2POOL_API_PAYOUT);
         path_xmr.push(GUPAX_P2POOL_API_XMR);
+        path_scan.push(GUPAX_P2POOL_API_SCAN);
         *self = Self {
             path_log,
             path_payout,
             path_xmr,
+            path_scan,
             ..std::mem::take(self)
         };
     }
@@ -310,6 +317,33 @@ impl GupaxP2poolApi {
         Self::disk_overwrite(&lines.len().to_string(), &self.path_payout)?;
         Self::disk_overwrite(&xmr.to_string(), &self.path_xmr)?;
         self.read_all_files_and_update()
+    }
+
+    // Next block to scan for the payouts of [address].
+    pub fn read_scan(&self, address: &str) -> Option<u64> {
+        let scan = read_to_string(File::Scan, &self.path_scan).ok()?;
+        scan.lines().find_map(|line| {
+            let (height, scanned_address) = line.split_once(' ')?;
+            if scanned_address == address {
+                height.parse().ok()
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn write_scan(&self, height: u64, address: &str) -> Result<(), TomlError> {
+        let scan = read_to_string(File::Scan, &self.path_scan)?;
+        let mut scan: String = scan
+            .lines()
+            .filter(|line| {
+                line.split_once(' ')
+                    .is_none_or(|(_, scanned)| scanned != address)
+            })
+            .map(|line| format!("{line}\n"))
+            .collect();
+        scan.push_str(&format!("{height} {address}\n"));
+        Self::disk_replace(&scan, &self.path_scan)
     }
 
     // Writes the log first, so a payout counted in the totals is in the log.

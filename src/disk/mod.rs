@@ -193,4 +193,5 @@ pub enum File {
     Log,    // log    | Raw log lines of P2Pool payouts received
     Payout, // payout | Single [u64] representing total payouts
     Xmr,    // xmr    | Single [u64] representing total XMR mined in atomic units
+    Scan,   // scan   | Next block to scan with the private view key, per address
 }

@@ -209,7 +209,8 @@ impl Helper {
     ) {
         let node = gui_api.lock().unwrap().current_node.clone();
         let mut api = gupax_p2pool_api.lock().unwrap();
-        let sources = SyncSources::new(&api, node.as_ref(), api.observer.clone());
+        let (view_key, observer) = (api.view_key.clone(), api.observer.clone());
+        let sources = SyncSources::new(&api, node.as_ref(), view_key, observer);
         payout_sync::start(&mut api, gupax_p2pool_api, sources);
     }
     //---------------------------------------------------------------------------------------------------- P2Pool specific

@@ -21,11 +21,17 @@
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
+use futures::{StreamExt, TryStreamExt};
 use log::*;
+use monero::{
+    Address, AddressType, PrivateKey, PublicKey, Transaction, ViewPair, consensus::deserialize,
+    cryptonote::onetime_key::KeyGenerator,
+};
 use reqwest::header::{CONTENT_TYPE, USER_AGENT};
 use reqwest_middleware::ClientWithMiddleware;
 use serde::{Deserialize, de::DeserializeOwned};
@@ -47,8 +53,17 @@ const READ_TIMEOUT: Duration = Duration::from_secs(60);
 // (date, atomic_unit, height) of each payout found.
 type Payouts = Vec<(String, AtomicUnit, u64)>;
 
-// The missing payouts are listed by the observer if set.
+// Blocks scanned at least by the first scan of an address, about 30 days.
+const FIRST_SCAN_BLOCKS: u64 = 21_600;
+// Maximum headers and transactions returned by a restricted node per request.
+const NODE_MAX_HEADERS: u64 = 1000;
+const NODE_MAX_TRANSACTIONS: usize = 100;
+// Maximum connections per IP to a public node.
+const NODE_MAX_CONNECTIONS: usize = 3;
+
+// The missing payouts are found with the view key if filled, else with the observer if set.
 pub struct SyncSources {
+    pub view_key: String,
     pub observer: String,
     // Address P2Pool mines to.
     pub address: String,
@@ -59,8 +74,14 @@ pub struct SyncSources {
 }
 
 impl SyncSources {
-    pub fn new(api: &GupaxP2poolApi, node: Option<&Node>, observer: String) -> Self {
+    pub fn new(
+        api: &GupaxP2poolApi,
+        node: Option<&Node>,
+        view_key: String,
+        observer: String,
+    ) -> Self {
         Self {
+            view_key,
             observer,
             address: api.address.clone(),
             node: node.map(|node| {
@@ -76,12 +97,12 @@ impl SyncSources {
     }
 }
 
-// Address P2Pool pays: [subaddress] if set, else [wallet].
+// Address P2Pool pays: [subaddress] if valid, else [wallet].
 pub fn payout_address(wallet: &str, subaddress: &str) -> String {
-    if subaddress.is_empty() {
-        wallet.to_string()
-    } else {
+    if Address::from_str(subaddress).is_ok_and(|a| a.addr_type == AddressType::SubAddress) {
         subaddress.to_string()
+    } else {
+        wallet.to_string()
     }
 }
 
@@ -129,24 +150,42 @@ async fn run(
     results: &mut Vec<String>,
 ) {
     let client = client();
-    if !sources.observer.is_empty() {
+    if sources.view_key.is_empty() && !sources.observer.is_empty() {
         let payouts = observer_payouts(&client, &sources.observer, &sources.address).await;
         results.push(match payouts {
             Ok(payouts) => merge(gupax_p2pool_api, &payouts),
             Err(e) => format!("Sync error: {e:#}"),
         });
     }
-    let node = synced_node(&client, sources.node.as_deref()).await;
-    results.push(match &node {
-        Ok(node) => {
-            let found_blocks = &sources.found_blocks;
-            match remove_orphaned_payouts(gupax_p2pool_api, &client, node, found_blocks).await {
-                Ok(removed) => format!("Orphaned payouts removed: {removed}"),
-                Err(e) => format!("Orphan check error: {e:#}"),
-            }
+    let (node, height) = match synced_node(&client, sources.node.as_deref()).await {
+        Ok(node) => node,
+        Err(e) => {
+            results.push(format!("Node error: {e:#}"));
+            return;
         }
-        Err(e) => format!("Orphan check error: {e:#}"),
-    });
+    };
+    if !sources.view_key.is_empty() {
+        let scanned = scan(
+            gupax_p2pool_api,
+            &client,
+            node,
+            height,
+            &sources.address,
+            &sources.view_key,
+            results,
+        )
+        .await;
+        if let Err(e) = scanned {
+            results.push(format!("Sync error: {e:#}"));
+        }
+    }
+    let found_blocks = &sources.found_blocks;
+    results.push(
+        match remove_orphaned_payouts(gupax_p2pool_api, &client, node, found_blocks).await {
+            Ok(removed) => format!("Orphaned payouts removed: {removed}"),
+            Err(e) => format!("Orphan check error: {e:#}"),
+        },
+    );
 }
 
 // Client failing on a request that stalls.
@@ -229,10 +268,12 @@ struct BlockHeaderResult {
     status: String,
 }
 
+// This matches a block header of the Monero node (excluding most fields).
 #[derive(Deserialize)]
 struct BlockHeader {
     depth: u64,
     hash: String,
+    miner_tx_hash: String,
 }
 
 // Removes the payouts of the blocks found by the pool that were orphaned.
@@ -282,6 +323,169 @@ async fn remove_orphaned_payouts(
         .map_err(|e| anyhow::anyhow!("payout history write error: {e}"))
 }
 
+//---------------------------------------------------------------------------------------------------- Private view key
+// These match the responses of the Monero node (excluding most fields).
+#[derive(Deserialize)]
+struct BlockHeaders {
+    headers: Vec<BlockHeader>,
+    status: String,
+}
+
+#[derive(Deserialize)]
+struct Transactions {
+    #[serde(default)]
+    txs: Vec<Tx>,
+    status: String,
+}
+
+#[derive(Deserialize)]
+struct Tx {
+    pruned_as_hex: String,
+    block_height: u64,
+    block_timestamp: i64,
+}
+
+// Scans the final blocks since the last scan of [address], else since the oldest payout or
+// 30 days ago, whichever is older, and adds the payouts found after each range of blocks.
+async fn scan(
+    gupax_p2pool_api: &Arc<Mutex<GupaxP2poolApi>>,
+    client: &ClientWithMiddleware,
+    node: &str,
+    height: u64,
+    address: &str,
+    view_key: &str,
+    results: &mut Vec<String>,
+) -> anyhow::Result<()> {
+    let pair = view_pair(address, view_key)?;
+    let tip = height.saturating_sub(1);
+    let start = {
+        let api = gupax_p2pool_api.lock().unwrap();
+        api.read_scan(address).unwrap_or_else(|| {
+            let first = tip.saturating_sub(FIRST_SCAN_BLOCKS);
+            api.log
+                .lines()
+                .filter_map(GupaxP2poolApi::payout_height)
+                .fold(first, u64::min)
+        })
+    };
+    let end = tip.saturating_sub(P2POOL_PAYOUT_CHECK_DEPTH);
+    let mut added = 0;
+    results.push(format!("Missing payouts added: {added}"));
+    for first in (start..=end).step_by(NODE_MAX_HEADERS as usize) {
+        let last = (first + NODE_MAX_HEADERS - 1).min(end);
+        gupax_p2pool_api.lock().unwrap().sync = format!("Scanning block {first} of {end}");
+        let payouts = scan_blocks(client, node, &pair, first, last).await?;
+        let mut api = gupax_p2pool_api.lock().unwrap();
+        added += api
+            .merge_payouts(&payouts)
+            .and_then(|added| api.write_scan(last + 1, address).map(|()| added))
+            .map_err(|e| anyhow::anyhow!("payout history write error: {e}"))?;
+        if let Some(result) = results.last_mut() {
+            *result = format!("Missing payouts added: {added}");
+        }
+    }
+    Ok(())
+}
+
+// Keys to find the outputs paid to [address].
+fn view_pair(address: &str, view_key: &str) -> anyhow::Result<ViewPair> {
+    let address = Address::from_str(address)?;
+    let view = PrivateKey::from_str(view_key.trim())?;
+    // The public view key of a subaddress derives from its public spend key.
+    let public_view = match address.addr_type {
+        AddressType::SubAddress => view * &address.public_spend,
+        _ => PublicKey::from_private_key(&view),
+    };
+    anyhow::ensure!(
+        public_view == address.public_view,
+        "the private view key does not belong to the P2Pool address"
+    );
+    Ok(ViewPair {
+        view,
+        spend: address.public_spend,
+    })
+}
+
+// Finds the payouts to [pair] in the coinbase transactions of the blocks from [start] to [end].
+async fn scan_blocks(
+    client: &ClientWithMiddleware,
+    node: &str,
+    pair: &ViewPair,
+    start: u64,
+    end: u64,
+) -> anyhow::Result<Payouts> {
+    let params = json!({"start_height": start, "end_height": end});
+    let headers = rpc::<BlockHeaders>(client, node, "get_block_headers_range", params).await?;
+    ensure_ok(&headers.status)?;
+    let requests = futures::stream::iter(headers.headers.chunks(NODE_MAX_TRANSACTIONS))
+        .map(|headers| coinbases(client, node, headers))
+        .buffered(NODE_MAX_CONNECTIONS);
+    let mut payouts = Payouts::new();
+    for tx in requests
+        .try_collect::<Vec<_>>()
+        .await?
+        .into_iter()
+        .flatten()
+    {
+        let transaction: Transaction = deserialize(&hex::decode(&tx.pruned_as_hex)?)?;
+        let amount = coinbase_payout(&transaction, pair);
+        if amount > 0 {
+            payouts.push((
+                utc_date(tx.block_timestamp),
+                AtomicUnit::from_u64(amount),
+                tx.block_height,
+            ));
+        }
+    }
+    Ok(payouts)
+}
+
+// Coinbase transactions of the blocks of [headers].
+async fn coinbases(
+    client: &ClientWithMiddleware,
+    node: &str,
+    headers: &[BlockHeader],
+) -> anyhow::Result<Vec<Tx>> {
+    let hashes: Vec<&str> = headers.iter().map(|h| h.miner_tx_hash.as_str()).collect();
+    let txs = client
+        .post(format!("{node}/get_transactions"))
+        .header(CONTENT_TYPE, "application/json")
+        .body(json!({"txs_hashes": hashes, "prune": true}).to_string())
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<Transactions>()
+        .await?;
+    ensure_ok(&txs.status)?;
+    anyhow::ensure!(
+        txs.txs.len() == hashes.len(),
+        "missing coinbase transactions"
+    );
+    Ok(txs.txs)
+}
+
+// Amount paid to [pair] by the coinbase transaction [tx].
+fn coinbase_payout(tx: &Transaction, pair: &ViewPair) -> u64 {
+    let Some(tx_pubkey) = tx.prefix.extra.try_parse().tx_pubkey() else {
+        return 0;
+    };
+    // The shared key is derived once, the view tags rule out most outputs.
+    let keygen = KeyGenerator::from_key(pair, tx_pubkey);
+    tx.prefix
+        .outputs
+        .iter()
+        .enumerate()
+        .filter(|(index, output)| {
+            output.target.check_view_tag(keygen.rv, *index)
+                && output
+                    .target
+                    .as_one_time_key()
+                    .is_some_and(|key| keygen.check(*index, key))
+        })
+        .map(|(_, output)| output.amount.0)
+        .sum()
+}
+
 //---------------------------------------------------------------------------------------------------- Monero node
 // This matches a JSON-RPC response of the Monero node.
 #[derive(Deserialize)]
@@ -298,20 +502,21 @@ struct RpcError {
 // This matches the [get_info] result (excluding most fields).
 #[derive(Deserialize)]
 struct Info {
+    height: u64,
     synchronized: bool,
     status: String,
 }
 
-// Returns [node] if synced to the network.
+// Returns [node] if synced to the network, and the height of its chain.
 async fn synced_node<'a>(
     client: &ClientWithMiddleware,
     node: Option<&'a str>,
-) -> anyhow::Result<&'a str> {
+) -> anyhow::Result<(&'a str, u64)> {
     let node = node.ok_or_else(|| anyhow::anyhow!("P2Pool is not connected to a node"))?;
     let info = rpc::<Info>(client, node, "get_info", json!({})).await?;
     ensure_ok(&info.status)?;
     anyhow::ensure!(info.synchronized, "the node is not synced");
-    Ok(node)
+    Ok((node, info.height))
 }
 
 async fn rpc<T: DeserializeOwned>(
@@ -357,6 +562,10 @@ fn utc_date(timestamp: i64) -> String {
 mod tests {
     use super::*;
 
+    // Monero General Fund, which publishes its private view key.
+    const ADDRESS: &str = "44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A";
+    const VIEW_KEY: &str = "f359631075708155cc3d92a32b75a7d02a5dcf27756707b47a2b31b21c389501";
+
     fn node(ip: &str, rpc: &str) -> Node {
         Node {
             ip: ip.to_string(),
@@ -368,14 +577,43 @@ mod tests {
     #[test]
     fn url_of_the_node() {
         let api = GupaxP2poolApi::new();
-        let url = |ip| SyncSources::new(&api, Some(&node(ip, "18081")), String::new()).node;
+        let url = |ip| {
+            SyncSources::new(&api, Some(&node(ip, "18081")), String::new(), String::new()).node
+        };
         assert_eq!(url("127.0.0.1").as_deref(), Some("http://127.0.0.1:18081"));
         assert_eq!(url("::1").as_deref(), Some("http://[::1]:18081"));
+    }
+
+    // A subaddress of the General Fund.
+    fn subaddress() -> Address {
+        let address = Address::from_str(ADDRESS).unwrap();
+        let pair = view_pair(ADDRESS, VIEW_KEY).unwrap();
+        let index = monero::cryptonote::subaddress::Index { major: 0, minor: 1 };
+        let spend = monero::cryptonote::subaddress::get_spend_public_key(&pair, index);
+        Address::subaddress(address.network, spend, pair.view * &spend)
     }
 
     #[test]
     fn address_paid_by_p2pool() {
         assert_eq!(payout_address("4A", ""), "4A");
-        assert_eq!(payout_address("4A", "8B"), "8B");
+        let subaddress = subaddress().to_string();
+        assert_eq!(payout_address("4A", &subaddress), subaddress);
+        // P2Pool mines to the wallet when the subaddress is invalid.
+        assert_eq!(payout_address("4A", "8B"), "4A");
+    }
+
+    #[test]
+    fn view_key_of_the_address() {
+        let address = Address::from_str(ADDRESS).unwrap();
+        let pair = view_pair(ADDRESS, VIEW_KEY).unwrap();
+        assert_eq!(pair.spend, address.public_spend);
+        let subaddress = subaddress();
+        let pair = view_pair(&subaddress.to_string(), VIEW_KEY).unwrap();
+        assert_eq!(pair.spend, subaddress.public_spend);
+        let error = view_pair(ADDRESS, &format!("01{}", "00".repeat(31))).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the private view key does not belong to the P2Pool address"
+        );
     }
 }

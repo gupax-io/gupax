@@ -278,7 +278,11 @@ pub const STATUS_SUBMENU_OLDEST: &str = "Sort the payouts from oldest to latest"
 pub const STATUS_SUBMENU_BIGGEST: &str = "Sort the payouts from biggest to smallest";
 pub const STATUS_SUBMENU_SMALLEST: &str = "Sort the payouts from smallest to biggest";
 pub const STATUS_SUBMENU_OBSERVER: &str = "P2Pool observer of the chain you mine on (p2pool.observer, mini.p2pool.observer or nano.p2pool.observer). The observer will see your address and IP.";
-pub const STATUS_SUBMENU_REFRESH: &str = "Add the missing payouts listed by the observer if set and remove the payouts of orphaned blocks.";
+pub const STATUS_SUBMENU_VIEW_KEY: &str =
+    "Private view key of your P2Pool address, used to find the missing payouts.";
+pub const STATUS_SUBMENU_PASTE_VIEW_KEY: &str = "Paste the private view key";
+pub const STATUS_SUBMENU_FILE_VIEW_KEY: &str = "Read the private view key from a file";
+pub const STATUS_SUBMENU_REFRESH: &str = "Add the missing payouts, found with the private view key if filled or else listed by the observer if set, and remove the payouts of orphaned blocks.";
 pub const STATUS_SUBMENU_AUTOMATIC: &str =
     "Automatically calculate share/block time with your current P2Pool 1 hour average hashrate";
 pub const STATUS_SUBMENU_MANUAL: &str = "Manually input a hashrate to calculate share/block time with current P2Pool/Monero network stats";

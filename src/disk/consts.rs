@@ -21,6 +21,7 @@ pub const POOL_TOML: &str = "pool.toml";
 // ├─ payout_log  // Raw log lines of payouts received
 // ├─ payout      // Single [u64] representing total payouts
 // ├─ xmr         // Single [u64] representing total XMR mined in atomic units
+// ├─ scan        // Next block to scan with the private view key, per address
 #[cfg(target_os = "windows")]
 pub const GUPAX_P2POOL_API_DIRECTORY: &str = r"p2pool\";
 #[cfg(target_family = "unix")]
@@ -28,10 +29,12 @@ pub const GUPAX_P2POOL_API_DIRECTORY: &str = "p2pool/";
 pub const GUPAX_P2POOL_API_LOG: &str = "log";
 pub const GUPAX_P2POOL_API_PAYOUT: &str = "payout";
 pub const GUPAX_P2POOL_API_XMR: &str = "xmr";
-pub const GUPAX_P2POOL_API_FILE_ARRAY: [&str; 3] = [
+pub const GUPAX_P2POOL_API_SCAN: &str = "scan";
+pub const GUPAX_P2POOL_API_FILE_ARRAY: [&str; 4] = [
     GUPAX_P2POOL_API_LOG,
     GUPAX_P2POOL_API_PAYOUT,
     GUPAX_P2POOL_API_XMR,
+    GUPAX_P2POOL_API_SCAN,
 ];
 
 #[cfg(target_os = "windows")]
