@@ -80,6 +80,8 @@ pub const P2POOL_API_PATH_LOCAL: &str = r"local\stratum";
 pub const P2POOL_API_PATH_NETWORK: &str = r"network\stats";
 #[cfg(target_os = "windows")]
 pub const P2POOL_API_PATH_POOL: &str = r"pool\stats";
+#[cfg(target_os = "windows")]
+pub const P2POOL_API_PATH_BLOCKS: &str = r"pool\blocks";
 #[cfg(target_family = "windows")]
 pub const P2POOL_API_PATH_P2P: &str = r"local\p2p";
 #[cfg(target_family = "unix")]
@@ -89,7 +91,11 @@ pub const P2POOL_API_PATH_NETWORK: &str = "network/stats";
 #[cfg(target_family = "unix")]
 pub const P2POOL_API_PATH_POOL: &str = "pool/stats";
 #[cfg(target_family = "unix")]
+pub const P2POOL_API_PATH_BLOCKS: &str = "pool/blocks";
+#[cfg(target_family = "unix")]
 pub const P2POOL_API_PATH_P2P: &str = "local/p2p";
+// Depth from which the block of a payout is final: mined coins are locked for as many blocks.
+pub const P2POOL_PAYOUT_CHECK_DEPTH: u64 = 60;
 pub const XMRIG_API_SUMMARY_ENDPOINT: &str = "1/summary"; // The default relative URI of XMRig's API summary
 pub const XMRIG_API_CONFIG_ENDPOINT: &str = "1/config"; // The default relative URI of XMRig's API config
 
@@ -271,6 +277,7 @@ pub const STATUS_SUBMENU_LATEST: &str = "Sort the payouts from latest to oldest"
 pub const STATUS_SUBMENU_OLDEST: &str = "Sort the payouts from oldest to latest";
 pub const STATUS_SUBMENU_BIGGEST: &str = "Sort the payouts from biggest to smallest";
 pub const STATUS_SUBMENU_SMALLEST: &str = "Sort the payouts from smallest to biggest";
+pub const STATUS_SUBMENU_REFRESH: &str = "Remove the payouts of orphaned blocks.";
 pub const STATUS_SUBMENU_AUTOMATIC: &str =
     "Automatically calculate share/block time with your current P2Pool 1 hour average hashrate";
 pub const STATUS_SUBMENU_MANUAL: &str = "Manually input a hashrate to calculate share/block time with current P2Pool/Monero network stats";

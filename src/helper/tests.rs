@@ -554,4 +554,25 @@ Uptime         = 0h 2m 4s
             args
         );
     }
+
+    #[test]
+    fn first_node_of_p2pool() {
+        use crate::disk::node::Node;
+        let args = |arguments: &str| arguments.split(' ').map(String::from).collect::<Vec<_>>();
+        let node = |ip: &str, rpc: &str, zmq: &str| Node {
+            ip: ip.to_string(),
+            rpc: rpc.to_string(),
+            zmq: zmq.to_string(),
+        };
+        let backup = "--host 127.0.0.1 --rpc-port 18089 --zmq-port 18084 --host node2.monerodevs.org --rpc-port 18081 --zmq-port 18083";
+        assert_eq!(
+            Helper::first_node(&args(backup)),
+            node("127.0.0.1", "18089", "18084")
+        );
+        // P2Pool connects to its default node without --host.
+        assert_eq!(
+            Helper::first_node(&args("--mini --rpc-port 18089")),
+            node("127.0.0.1", "18089", "18083")
+        );
+    }
 }

@@ -71,6 +71,7 @@ pub mod crawler;
 pub mod node;
 pub mod notification;
 pub mod p2pool;
+pub mod payout_sync;
 pub mod sys_info;
 pub mod tests;
 pub mod xrig;

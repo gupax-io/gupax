@@ -30,6 +30,10 @@ pub struct GupaxP2poolApi {
     pub path_log: PathBuf,  // Path to [log]
     pub path_payout: PathBuf, // Path to [payout]
     pub path_xmr: PathBuf,  // Path to [xmr]
+    pub sync: String,       // Result of the last payouts sync
+    pub syncing: bool,
+    pub stop_sync: bool,
+    pub found_blocks: PathBuf, // Blocks found by the pool, in the data API of the running P2Pool
 }
 
 impl Default for GupaxP2poolApi {
@@ -53,7 +57,24 @@ impl GupaxP2poolApi {
             path_xmr: PathBuf::new(),
             path_payout: PathBuf::new(),
             path_log: PathBuf::new(),
+            sync: String::new(),
+            syncing: false,
+            stop_sync: false,
+            found_blocks: PathBuf::new(),
         }
+    }
+
+    #[cfg(test)]
+    // Creates the files in a new temporary directory named after [name].
+    pub fn temporary(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("gupax_test_{name}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        Self::create_all_files(&dir).unwrap();
+        let mut api = Self::new();
+        api.fill_paths(&dir);
+        api.read_all_files_and_update().unwrap();
+        api
     }
 
     pub fn fill_paths(&mut self, gupax_p2pool_dir: &Path) {
@@ -211,6 +232,46 @@ impl GupaxP2poolApi {
         self.update_payout_strings();
     }
 
+    // Height of the block of a formatted payout line.
+    pub fn payout_height(line: &str) -> Option<u64> {
+        line.rsplit_once("Block ")?.1.replace(',', "").parse().ok()
+    }
+
+    // Removes the payouts received in the blocks at [heights] and updates [self] and the files.
+    // Returns the number of payouts removed.
+    pub fn remove_payouts(&mut self, heights: &[u64]) -> Result<u64, TomlError> {
+        if heights.is_empty() {
+            return Ok(0);
+        }
+        // Another Gupax may have changed the files.
+        self.read_all_files_and_update()?;
+        let mut lines = Vec::new();
+        let mut removed = 0;
+        for line in self.log.lines() {
+            if Self::payout_height(line).is_some_and(|height| heights.contains(&height)) {
+                removed += 1;
+            } else {
+                lines.push(line.to_string());
+            }
+        }
+        if removed > 0 {
+            self.rewrite(&lines)?;
+        }
+        Ok(removed)
+    }
+
+    // Replaces the history with [lines] and the totals with the totals of [lines].
+    fn rewrite(&mut self, lines: &[String]) -> Result<(), TomlError> {
+        let log: String = lines.iter().map(|line| format!("{line}\n")).collect();
+        let xmr = lines.iter().fold(AtomicUnit::new(), |xmr, line| {
+            xmr.add_self(PayoutOrd::parse_formatted_payout_line(line).1)
+        });
+        Self::disk_replace(&log, &self.path_log)?;
+        Self::disk_overwrite(&lines.len().to_string(), &self.path_payout)?;
+        Self::disk_overwrite(&xmr.to_string(), &self.path_xmr)?;
+        self.read_all_files_and_update()
+    }
+
     pub fn write_to_all_files(&self, formatted_log_line: &str) -> Result<(), TomlError> {
         Self::disk_overwrite(&self.payout_u64.to_string(), &self.path_payout)?;
         Self::disk_overwrite(&self.xmr.to_string(), &self.path_xmr)?;
@@ -245,6 +306,17 @@ impl GupaxP2poolApi {
                 Err(TomlError::Io(e))
             }
         }
+    }
+
+    // Replaces the file at [path] atomically.
+    fn disk_replace(string: &str, path: &Path) -> Result<(), TomlError> {
+        use std::io::Write;
+        let tmp = path.with_extension("tmp");
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(string.as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&tmp, path)?;
+        Ok(())
     }
 
     pub fn disk_overwrite(string: &str, path: &PathBuf) -> Result<(), TomlError> {

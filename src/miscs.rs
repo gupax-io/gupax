@@ -202,7 +202,11 @@ fn datetimeonsole() -> String {
 }
 
 pub fn client() -> ClientWithMiddleware {
-    reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
+    client_with(reqwest::Client::new())
+}
+// Adds retries to [client].
+pub fn client_with(client: reqwest::Client) -> ClientWithMiddleware {
+    reqwest_middleware::ClientBuilder::new(client)
         .with(reqwest_retry::RetryTransientMiddleware::new_with_policy(
             reqwest_retry::policies::ExponentialBackoff::builder()
                 .retry_bounds(Duration::from_secs(1), Duration::from_secs(4))

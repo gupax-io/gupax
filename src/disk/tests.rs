@@ -249,6 +249,42 @@ mod test {
     }
 
     #[test]
+    fn remove_orphaned_payouts() {
+        use crate::disk::gupax_p2pool_api::GupaxP2poolApi;
+        use crate::xmr::PayoutOrd;
+
+        let mut api = GupaxP2poolApi::temporary("remove_orphaned_payouts");
+        let add = |api: &mut GupaxP2poolApi, xmr: &str, height: u64| {
+            let line = format!(
+                "NOTICE  2026-10-01 10:00:00.0000 P2Pool Your wallet 4AAA got a payout of {xmr} XMR in block {height}"
+            );
+            let (date, atomic_unit, block) = PayoutOrd::parse_raw_payout_line(&line);
+            let formatted_log_line = GupaxP2poolApi::format_payout(&date, &atomic_unit, &block);
+            api.add_payout(&formatted_log_line, date, atomic_unit, block);
+            api.write_to_all_files(&formatted_log_line).unwrap();
+        };
+        add(&mut api, "0.000496318620", 3500000);
+        add(&mut api, "0.000000000002", 3500001);
+        assert_eq!(api.xmr.to_u64(), 496318622);
+        // Another Gupax adds a payout.
+        add(&mut api.clone(), "0.000000000003", 3500002);
+
+        // The first block was orphaned, the other one has no payout.
+        assert_eq!(api.remove_payouts(&[3500000, 3400000]).unwrap(), 1);
+        assert_eq!(api.remove_payouts(&[3400000]).unwrap(), 0);
+
+        api.read_all_files_and_update().unwrap();
+        assert_eq!(api.payout_u64, 2);
+        assert_eq!(api.xmr.to_u64(), 5);
+        assert_eq!(
+            api.log,
+            "2026-10-01 10:00:00.0000 | 0.000000000002 XMR | Block 3,500,001\n\
+             2026-10-01 10:00:00.0000 | 0.000000000003 XMR | Block 3,500,002\n"
+        );
+        std::fs::remove_dir_all(api.path_log.parent().unwrap()).unwrap();
+    }
+
+    #[test]
     fn convert_hash() {
         use crate::disk::status::Hash;
         let hash = 1.0;

@@ -78,7 +78,7 @@ impl AtomicUnit {
     // }
 
     pub fn from_f64(f: f64) -> Self {
-        Self((f * 1_000_000_000_000.0) as u64)
+        Self((f * 1_000_000_000_000.0).round() as u64)
     }
 
     // pub fn f64(&self) -> f64 {

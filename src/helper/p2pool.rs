@@ -20,7 +20,6 @@ use super::Process;
 use crate::app::BackupNodes;
 use crate::app::panels::middle::common::list_poolnode::PoolNode;
 use crate::app::submenu_enum::SubmenuP2pool;
-use crate::components::node::RemoteNode;
 use crate::disk::node::Node as NodeString;
 use crate::disk::state::Node;
 use crate::disk::state::P2pool;
@@ -32,6 +31,7 @@ use crate::helper::ProcessState;
 use crate::helper::check_died;
 use crate::helper::check_user_input;
 use crate::helper::crawler::Crawler;
+use crate::helper::payout_sync::{self, SyncSources};
 use crate::helper::signal_end;
 use crate::helper::sleep_end_loop;
 use crate::regex::P2POOL_REGEX;
@@ -76,6 +76,7 @@ impl Helper {
         reader: PipeReader,
         gupax_p2pool_api: Arc<Mutex<GupaxP2poolApi>>,
         gui_api: Arc<Mutex<PubP2poolApi>>,
+        process: Arc<Mutex<Process>>,
     ) {
         use std::io::BufRead;
         let mut stdout = std::io::BufReader::new(reader).lines();
@@ -177,19 +178,17 @@ impl Helper {
                 debug!("P2Pool PTY | Found payout, attempting write: {line}");
                 let (date, atomic_unit, block) = PayoutOrd::parse_raw_payout_line(&line);
                 let formatted_log_line = GupaxP2poolApi::format_payout(&date, &atomic_unit, &block);
-                GupaxP2poolApi::add_payout(
-                    &mut gupax_p2pool_api.lock().unwrap(),
-                    &formatted_log_line,
-                    date,
-                    atomic_unit,
-                    block,
-                );
-                if let Err(e) = GupaxP2poolApi::write_to_all_files(
-                    &gupax_p2pool_api.lock().unwrap(),
-                    &formatted_log_line,
-                ) {
+                // Hold the lock for both steps, a sync rewrites the history.
+                let mut api = gupax_p2pool_api.lock().unwrap();
+                api.add_payout(&formatted_log_line, date, atomic_unit, block);
+                if let Err(e) = api.write_to_all_files(&formatted_log_line) {
                     error!("P2Pool PTY GupaxP2poolApi | Write error: {e}");
                 }
+            }
+            // The blocks found before by the pool may have been orphaned since.
+            if line.contains("BLOCK FOUND") && process.lock().unwrap().state == ProcessState::Alive
+            {
+                Self::start_payout_sync(&gui_api, &gupax_p2pool_api);
             }
             if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
                 error!("P2Pool PTY Parse | Output error: {e}");
@@ -198,6 +197,16 @@ impl Helper {
                 error!("P2Pool PTY Pub | Output error: {e}");
             }
         }
+    }
+    // Starts a payout sync with the node P2Pool uses.
+    fn start_payout_sync(
+        gui_api: &Arc<Mutex<PubP2poolApi>>,
+        gupax_p2pool_api: &Arc<Mutex<GupaxP2poolApi>>,
+    ) {
+        let node = gui_api.lock().unwrap().current_node.clone();
+        let mut api = gupax_p2pool_api.lock().unwrap();
+        let sources = SyncSources::new(&api, node.as_ref());
+        payout_sync::start(&mut api, gupax_p2pool_api, sources);
     }
     //---------------------------------------------------------------------------------------------------- P2Pool specific
     #[cold]
@@ -351,11 +360,7 @@ impl Helper {
         let pub_api = Arc::clone(&helper.lock().unwrap().pub_api_p2pool);
         let gupax_p2pool_api = Arc::clone(&helper.lock().unwrap().gupax_p2pool_api);
         let path = path.to_path_buf();
-        let node_to_start_with = state
-            .selected_remote_node
-            .as_ref()
-            .expect("P2Pool should always be started with a node set")
-            .clone();
+        let node_to_start_with = Self::first_node(&args);
         // thread to check if the button for switching to local node if it is synced to restart p2pool.
         // starting the thread even if the option is disabled allows to apply the change immediately in case it is enabled again without asking the user to restart p2pool.
         // Start this thread only if we don't already override to local node
@@ -462,6 +467,9 @@ impl Helper {
                 in_peers: state.in_peers.to_string(),
             };
         }
+        // Sources of the payout sync.
+        let gupax_p2pool_api = Arc::clone(&helper.lock().unwrap().gupax_p2pool_api);
+        gupax_p2pool_api.lock().unwrap().found_blocks = api_path.join(P2POOL_API_PATH_BLOCKS);
         let mut api_path_local = api_path.clone();
         let mut api_path_network = api_path.clone();
         let mut api_path_pool = api_path.clone();
@@ -612,6 +620,29 @@ impl Helper {
         }
         args
     }
+    // Node P2Pool connects to first: the first --host of [args] and its ports.
+    pub fn first_node(args: &[String]) -> NodeString {
+        // Defaults of P2Pool.
+        let mut node = NodeString {
+            ip: "127.0.0.1".to_string(),
+            rpc: NODE_RPC_PORT_DEFAULT.to_string(),
+            zmq: NODE_ZMQ_PORT_DEFAULT.to_string(),
+        };
+        let mut host_seen = false;
+        for pair in args.windows(2) {
+            match pair[0].as_str() {
+                "--host" if host_seen => break,
+                "--host" => {
+                    host_seen = true;
+                    node.ip.clone_from(&pair[1]);
+                }
+                "--rpc-port" => node.rpc.clone_from(&pair[1]),
+                "--zmq-port" => node.zmq.clone_from(&pair[1]),
+                _ => (),
+            }
+        }
+        node
+    }
 
     #[cold]
     #[inline(never)]
@@ -631,7 +662,7 @@ impl Helper {
         api_path_pool: std::path::PathBuf,
         api_path_p2p: std::path::PathBuf,
         gupax_p2pool_api: Arc<Mutex<GupaxP2poolApi>>,
-        node: RemoteNode,
+        node: NodeString,
     ) {
         // 1a. Create PTY
         let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
@@ -664,15 +695,17 @@ impl Helper {
         debug!("P2Pool | Spawning PTY read thread...");
         let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
         let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
-        let gupax_p2pool_api = Arc::clone(&gupax_p2pool_api);
+        let gupax_p2pool_api_c = Arc::clone(&gupax_p2pool_api);
         let p2pool_api_c = Arc::clone(&gui_api);
+        let process_c = Arc::clone(&process);
         tokio::spawn(async move {
             Self::read_pty_p2pool(
                 output_parse,
                 output_pub,
                 stdout_reader,
-                gupax_p2pool_api,
+                gupax_p2pool_api_c,
                 p2pool_api_c,
+                process_c,
             );
         });
         let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
@@ -714,14 +747,11 @@ impl Helper {
 
         // Set the node used so that Stats can fetch it.
         // It will be updated with the output console of P2Pool while the process is still running
-        gui_api.lock().unwrap().current_node = Some(NodeString {
-            ip: node.ip.to_string(),
-            rpc: node.rpc.to_string(),
-            zmq: node.zmq.to_string(),
-        });
+        gui_api.lock().unwrap().current_node = Some(node);
 
         // 4. Loop as watchdog
         let mut first_loop = true;
+        let mut payouts_synced = false;
         let mut last_p2pool_request = tokio::time::Instant::now();
         let mut last_status_request = tokio::time::Instant::now();
 
@@ -730,6 +760,7 @@ impl Helper {
             // Set timer
             let now = Instant::now();
             debug!("P2Pool Watchdog | ----------- Start of loop -----------");
+            let alive;
             {
                 gui_api.lock().unwrap().tick = (last_p2pool_request.elapsed().as_secs() % 60) as u8;
                 // Check if the process is secretly died without us knowing :)
@@ -804,6 +835,7 @@ impl Helper {
 
                 // check if state must be changed based on local and p2p API
                 pub_api_lock.update_state(&mut process_lock);
+                alive = process_lock.state == ProcessState::Alive;
 
                 debug!("P2Pool Watchdog | Attempting [network] & [pool] API file read");
                 if let (Ok(network_api), Ok(pool_api)) = (
@@ -849,10 +881,19 @@ impl Helper {
                     first_loop = false;
                 }
             } // end of scope to drop lock
+            // A payout sync runs only while P2Pool is alive.
+            if !alive {
+                gupax_p2pool_api.lock().unwrap().stop_sync = true;
+            } else if !payouts_synced {
+                // Sync the payouts once P2Pool is connected to a synced node.
+                payouts_synced = true;
+                Self::start_payout_sync(&gui_api, &gupax_p2pool_api);
+            }
             sleep_end_loop(now, ProcessName::P2pool).await;
         }
 
         // 5. If loop broke, we must be done here.
+        gupax_p2pool_api.lock().unwrap().stop_sync = true;
         info!("P2Pool Watchdog | Watchdog thread exiting... Goodbye!");
     }
     #[tokio::main]
