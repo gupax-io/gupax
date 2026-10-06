@@ -187,7 +187,9 @@ impl Status {
                         .clicked()
                     {
                         let node = p2pool_api.lock().unwrap().current_node.clone();
-                        payout_sync::start(&mut api, gupax_p2pool_api, node.as_ref());
+                        if let Some(node) = node {
+                            payout_sync::start(&mut api, gupax_p2pool_api, &node);
+                        }
                     }
                     if api.syncing {
                         ui.spinner();

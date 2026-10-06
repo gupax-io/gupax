@@ -191,5 +191,5 @@ pub enum File {
 
     // Gupax-P2Pool API
     Log,  // log  | Raw log lines of P2Pool payouts received
-    Scan, // scan | Next block to scan with the private view key, per address
+    Scan, // scan | Block from which to sync the payouts, per address
 }

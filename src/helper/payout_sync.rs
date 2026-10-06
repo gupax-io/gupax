@@ -50,11 +50,11 @@ use crate::{
     disk::{gupax_p2pool_api::GupaxP2poolApi, node::Node},
     helper::p2pool::P2poolNodes,
     miscs::client_with,
-    xmr::AtomicUnit,
+    xmr::{AtomicUnit, PayoutOrd},
 };
 
-// Time without data after which a request fails.
-// The largest requests of a sync started answering within 0.2 s from a remote node.
+// Time without data after which a request fails, so a stalled sync ends and the automatic syncs
+// go on. The largest requests of a sync started answering within 0.2 s from a remote node.
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 // (date, atomic_unit, height) of each payout found.
@@ -84,18 +84,18 @@ struct SyncSources {
     // Address P2Pool mines to.
     address: String,
     // RPC of the node P2Pool uses.
-    node: Option<NodeRpc>,
+    node: NodeRpc,
     // File of the P2Pool data API listing the last blocks found by the pool.
     found_blocks: PathBuf,
 }
 
 impl SyncSources {
-    fn new(api: &GupaxP2poolApi, node: Option<&Node>) -> Self {
+    fn new(api: &GupaxP2poolApi, node: &Node) -> Self {
         Self {
             view_key: api.view_key.clone(),
             observer: api.observer.clone(),
             address: api.address.clone(),
-            node: node.map(|node| NodeRpc::new(node, &api.nodes)),
+            node: NodeRpc::new(node, &api.nodes),
             found_blocks: api.found_blocks.clone(),
         }
     }
@@ -158,6 +158,15 @@ impl NodeRpc {
         }
         Ok(client_with(client.build()?))
     }
+
+    // Concurrent requests to the node: a node with a login gets one connection, for its challenge.
+    fn connections(&self) -> usize {
+        if self.login.is_empty() {
+            NODE_MAX_CONNECTIONS
+        } else {
+            1
+        }
+    }
 }
 
 // Address P2Pool pays: [subaddress] if valid, else [wallet].
@@ -174,7 +183,7 @@ pub fn payout_address(wallet: &str, subaddress: &str) -> String {
 pub fn start(
     api: &mut GupaxP2poolApi,
     gupax_p2pool_api: &Arc<Mutex<GupaxP2poolApi>>,
-    node: Option<&Node>,
+    node: &Node,
 ) -> bool {
     if api.syncing {
         return false;
@@ -220,19 +229,48 @@ async fn run(
     results: &mut Vec<String>,
 ) -> bool {
     let mut failed = false;
+    let node = &sources.node;
+    let (node_client, height) = match synced_node(node).await {
+        Ok(synced) => synced,
+        Err(e) => {
+            results.push(format!("Node error: {e:#}"));
+            return true;
+        }
+    };
+    let found_blocks = read_found_blocks(&sources.found_blocks);
     // Final payouts of the address listed by the observer.
     let mut listed = Payouts::new();
     if sources.view_key.is_empty() && !sources.observer.is_empty() {
-        let payouts = observer_payouts(&client(), &sources.observer, &sources.address)
-            .await
-            .and_then(|payouts| {
-                let merged = gupax_p2pool_api.lock().unwrap().merge_payouts(&payouts);
-                let added =
-                    merged.map_err(|e| anyhow::anyhow!("payout history write error: {e}"))?;
-                listed = payouts;
-                Ok(added)
+        let added = async {
+            let (position, path_scan) = {
+                let api = gupax_p2pool_api.lock().unwrap();
+                (api.read_scan(&sources.address), api.path_scan.clone())
+            };
+            // The payouts before [position] are in the history, the orphan check needs the ones
+            // of the blocks found by the pool.
+            let from_height = position.map(|position| {
+                let found = found_blocks.iter().flatten().map(|block| block.height);
+                found.fold(position, u64::min)
             });
-        match payouts {
+            let last = last_final_block(height);
+            let observer = &sources.observer;
+            let address = &sources.address;
+            let payouts =
+                observer_payouts(&client()?, observer, address, from_height, last).await?;
+            let write_error = |e| anyhow::anyhow!("payout history write error: {e}");
+            let added = gupax_p2pool_api
+                .lock()
+                .unwrap()
+                .merge_payouts(&payouts)
+                .map_err(write_error)?;
+            if position.is_none_or(|position| last + 1 > position) {
+                GupaxP2poolApi::write_scan(&path_scan, last + 1, address).map_err(write_error)?;
+            }
+            listed = payouts;
+            anyhow::Ok(added)
+        }
+        .await;
+        match added {
             Ok(added) => results.push(format!("Missing payouts added: {added}")),
             Err(e) => {
                 results.push(format!("Sync error: {e:#}"));
@@ -240,13 +278,6 @@ async fn run(
             }
         }
     }
-    let (client, node, height) = match synced_node(sources.node.as_ref()).await {
-        Ok(node) => node,
-        Err(e) => {
-            results.push(format!("Node error: {e:#}"));
-            return true;
-        }
-    };
     let pair = if sources.view_key.is_empty() {
         None
     } else {
@@ -260,7 +291,7 @@ async fn run(
     if let Some(pair) = &pair {
         let scanned = scan(
             gupax_p2pool_api,
-            &client,
+            &node_client,
             node,
             height,
             &sources.address,
@@ -273,16 +304,20 @@ async fn run(
             failed = true;
         }
     }
-    let found_blocks = &sources.found_blocks;
-    let checked = remove_orphaned_payouts(
-        gupax_p2pool_api,
-        &client,
-        node,
-        found_blocks,
-        pair.as_ref(),
-        &listed,
-        results,
-    )
+    let checked = async {
+        let found_blocks = found_blocks?;
+        let pair = pair.as_ref();
+        remove_orphaned_payouts(
+            gupax_p2pool_api,
+            &node_client,
+            node,
+            &found_blocks,
+            pair,
+            &listed,
+            results,
+        )
+        .await
+    }
     .await;
     if let Err(e) = checked {
         results.push(format!("Orphan check error: {e:#}"));
@@ -292,13 +327,11 @@ async fn run(
 }
 
 // Client failing on a request that stalls.
-fn client() -> ClientWithMiddleware {
-    client_with(
-        reqwest::Client::builder()
-            .read_timeout(READ_TIMEOUT)
-            .build()
-            .unwrap_or_default(),
-    )
+fn client() -> anyhow::Result<ClientWithMiddleware> {
+    let client = reqwest::Client::builder()
+        .read_timeout(READ_TIMEOUT)
+        .build()?;
+    Ok(client_with(client))
 }
 
 //---------------------------------------------------------------------------------------------------- Observer
@@ -316,21 +349,23 @@ struct ObserverError {
     error: String,
 }
 
-// Lists the final payouts of [address] known by [observer].
+// Lists the payouts of [address] known by [observer], from the block [from_height] if set
+// to the block [last].
 async fn observer_payouts(
     client: &ClientWithMiddleware,
     observer: &str,
     address: &str,
+    from_height: Option<u64>,
+    last: u64,
 ) -> anyhow::Result<Payouts> {
     let observer = observer.trim().trim_end_matches('/');
-    let url = if observer.contains("://") {
-        format!("{observer}/api/payouts/{address}?limit=0")
+    let scheme = if observer.contains("://") {
+        ""
     } else {
-        format!("https://{observer}/api/payouts/{address}?limit=0")
+        "https://"
     };
-    // Blocks found since then may still be orphaned.
-    let final_before = chrono::Utc::now().timestamp()
-        - (P2POOL_PAYOUT_CHECK_DEPTH * MONERO_BLOCK_TIME_IN_SECONDS) as i64;
+    let from = from_height.map_or_else(String::new, |height| format!("&from_height={height}"));
+    let url = format!("{scheme}{observer}/api/payouts/{address}?limit=0{from}");
     let response = client
         .get(url)
         .header(USER_AGENT, APP_USER_AGENT)
@@ -348,7 +383,7 @@ async fn observer_payouts(
         .json::<Vec<ObserverPayout>>()
         .await?
         .into_iter()
-        .filter(|payout| payout.timestamp <= final_before)
+        .filter(|payout| payout.main_height <= last)
         .map(|payout| {
             (
                 utc_date(payout.timestamp),
@@ -389,24 +424,27 @@ async fn remove_orphaned_payouts(
     gupax_p2pool_api: &Arc<Mutex<GupaxP2poolApi>>,
     client: &ClientWithMiddleware,
     node: &NodeRpc,
-    found_blocks: &Path,
+    found_blocks: &[FoundBlock],
     pair: Option<&ViewPair>,
     listed: &Payouts,
     results: &mut Vec<String>,
 ) -> anyhow::Result<()> {
-    let found_blocks: Vec<FoundBlock> = match std::fs::read_to_string(found_blocks) {
-        Ok(found_blocks) => serde_json::from_str(&found_blocks)?,
-        // P2Pool writes it once the pool found a block.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(e.into()),
-    };
     let paid: HashSet<u64> = gupax_p2pool_api
         .lock()
         .unwrap()
         .log
         .lines()
-        .filter_map(GupaxP2poolApi::payout_height)
+        .filter_map(PayoutOrd::payout_height)
         .collect();
+    let found_blocks: Vec<&FoundBlock> = found_blocks
+        .iter()
+        .filter(|block| paid.contains(&block.height))
+        .collect();
+    let headers: Vec<_> = futures::stream::iter(&found_blocks)
+        .map(|block| block_header(client, node, block.height))
+        .buffered(node.connections())
+        .collect()
+        .await;
     let mut orphaned = Vec::new();
     let mut kept = HashSet::new();
     // (height, amount) of the payouts of main chain blocks.
@@ -415,14 +453,7 @@ async fn remove_orphaned_payouts(
         .map(|(_, atomic_unit, height)| (*height, atomic_unit.to_u64()))
         .collect();
     let mut unchecked = None;
-    for block in found_blocks {
-        if !paid.contains(&block.height) {
-            continue;
-        }
-        let params = json!({"height": block.height});
-        let header = rpc::<BlockHeaderResult>(client, node, "get_block_header_by_height", params)
-            .await
-            .and_then(|result| ensure_ok(&result.status).map(|()| result.block_header));
+    for (block, header) in found_blocks.into_iter().zip(headers) {
         let header = match header {
             Ok(header) => header,
             // The payouts at this height are kept until checked.
@@ -462,6 +493,29 @@ async fn remove_orphaned_payouts(
         .map_err(|e| anyhow::anyhow!("payout history write error: {e}"))?;
     results.push(format!("Orphaned payouts removed: {removed}"));
     unchecked.map_or(Ok(()), Err)
+}
+
+// Blocks found by the pool, listed by P2Pool in the file [path].
+fn read_found_blocks(path: &Path) -> anyhow::Result<Vec<FoundBlock>> {
+    match std::fs::read_to_string(path) {
+        Ok(found_blocks) => Ok(serde_json::from_str(&found_blocks)?),
+        // P2Pool writes it once the pool found a block.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+// Header of the main chain block at [height].
+async fn block_header(
+    client: &ClientWithMiddleware,
+    node: &NodeRpc,
+    height: u64,
+) -> anyhow::Result<BlockHeader> {
+    let params = json!({"height": height});
+    let result =
+        rpc::<BlockHeaderResult>(client, node, "get_block_header_by_height", params).await?;
+    ensure_ok(&result.status)?;
+    Ok(result.block_header)
 }
 
 //---------------------------------------------------------------------------------------------------- Private view key
@@ -506,7 +560,7 @@ async fn scan(
             api.path_scan.clone(),
         )
     };
-    let end = tip.saturating_sub(P2POOL_PAYOUT_CHECK_DEPTH);
+    let end = last_final_block(height);
     let mut added = 0;
     results.push(format!("Missing payouts added: {added}"));
     for first in (start..=end).step_by(NODE_MAX_HEADERS as usize) {
@@ -570,15 +624,9 @@ async fn scan_blocks(
     let params = json!({"start_height": start, "end_height": end});
     let headers = rpc::<BlockHeaders>(client, node, "get_block_headers_range", params).await?;
     ensure_ok(&headers.status)?;
-    // A node with a login gets one connection, for its challenge.
-    let connections = if node.login.is_empty() {
-        NODE_MAX_CONNECTIONS
-    } else {
-        1
-    };
     let requests = futures::stream::iter(headers.headers.chunks(NODE_MAX_TRANSACTIONS))
         .map(|headers| coinbases(client, node, headers))
-        .buffered(connections);
+        .buffered(node.connections());
     let mut payouts = Payouts::new();
     for tx in requests
         .try_collect::<Vec<_>>()
@@ -670,16 +718,18 @@ struct Info {
     status: String,
 }
 
-// Client of [node], [node] and the height of its chain, if [node] is synced to the network.
-async fn synced_node(
-    node: Option<&NodeRpc>,
-) -> anyhow::Result<(ClientWithMiddleware, &NodeRpc, u64)> {
-    let node = node.ok_or_else(|| anyhow::anyhow!("P2Pool is not connected to a node"))?;
+// Last block of a chain of [height] blocks that can no longer be orphaned.
+fn last_final_block(height: u64) -> u64 {
+    height.saturating_sub(1 + P2POOL_PAYOUT_CHECK_DEPTH)
+}
+
+// Client of [node] and the height of its chain, if [node] is synced to the network.
+async fn synced_node(node: &NodeRpc) -> anyhow::Result<(ClientWithMiddleware, u64)> {
     let client = node.client()?;
     let info = rpc::<Info>(&client, node, "get_info", json!({})).await?;
     ensure_ok(&info.status)?;
     anyhow::ensure!(info.synchronized, "the node is not synced");
-    Ok((client, node, info.height))
+    Ok((client, info.height))
 }
 
 async fn rpc<T: DeserializeOwned>(
@@ -789,7 +839,7 @@ mod tests {
     ) -> mockito::Mock {
         server
             .mock("GET", format!("/api/payouts/{address}").as_str())
-            .match_query(Matcher::UrlEncoded("limit".to_string(), "0".to_string()))
+            .match_query(Matcher::Exact("limit=0".to_string()))
             .match_header("user-agent", APP_USER_AGENT)
             .with_status(status)
             .with_body(body)
@@ -871,9 +921,7 @@ mod tests {
         let args = "--socks5 127.0.0.1:9050 --host xyz.onion --rpc-login user:pass --rpc-ssl --host 192.168.1.5";
         api.nodes = P2poolNodes::from_args(&args.split(' ').map(String::from).collect::<Vec<_>>());
         let rpc = |ip| {
-            let node = SyncSources::new(&api, Some(&node(ip, "18081")))
-                .node
-                .unwrap();
+            let node = SyncSources::new(&api, &node(ip, "18081")).node;
             (node.url, node.login, node.proxy)
         };
         let strings = |url: &str, login: &str, proxy: &str| {
@@ -919,7 +967,7 @@ mod tests {
         let mut node = rpc_at(server.url());
         node.login = "user:pass".to_string();
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let client = client();
+        let client = client().unwrap();
 
         // The next request answers the same challenge.
         for _ in 0..2 {
@@ -944,7 +992,7 @@ mod tests {
         let error = tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(rpc::<serde_json::Value>(
-                &client(),
+                &client().unwrap(),
                 &node,
                 "get_info",
                 json!({}),
@@ -991,10 +1039,10 @@ mod tests {
     fn removes_the_payouts_of_orphaned_blocks() {
         let mut server = mockito::Server::new();
         mock_node(&mut server);
-        let mut api = GupaxP2poolApi::temporary("removes_the_payouts_of_orphaned_blocks");
-        let dir = api.path_log.parent().unwrap().to_path_buf();
+        let dir = tempfile::tempdir().unwrap();
+        let mut api = GupaxP2poolApi::temporary(dir.path());
         let found_blocks = write_found_blocks(
-            &dir,
+            dir.path(),
             json!([
                 {"height": 99999999, "hash": HASH_ORPHANED},
                 {"height": 3654401, "hash": HASH_3654401},
@@ -1023,7 +1071,7 @@ mod tests {
         api.merge_payouts(&payouts).unwrap();
         let api = Arc::new(Mutex::new(api));
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let client = client();
+        let client = client().unwrap();
         let node = rpc_at(server.url());
 
         // The other blocks are checked after the block unknown to the node.
@@ -1033,7 +1081,7 @@ mod tests {
                 &api,
                 &client,
                 &node,
-                &found_blocks,
+                &read_found_blocks(&found_blocks).unwrap(),
                 None,
                 &Payouts::new(),
                 &mut results,
@@ -1046,14 +1094,14 @@ mod tests {
                 .contains("greater than current top block height")
         );
         // P2Pool did not find a block yet.
-        let missing = dir.join("missing");
+        let missing = dir.path().join("missing");
         let mut results = Vec::new();
         runtime
             .block_on(remove_orphaned_payouts(
                 &api,
                 &client,
                 &node,
-                &missing,
+                &read_found_blocks(&missing).unwrap(),
                 None,
                 &Payouts::new(),
                 &mut results,
@@ -1065,17 +1113,16 @@ mod tests {
         assert_eq!(api.payout_u64, 3);
         assert_eq!(api.xmr.to_u64(), 274561866);
         assert!(!api.has_payout(3654400));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn keeps_a_payout_paid_again_at_the_same_height() {
         let mut server = mockito::Server::new();
         mock_node(&mut server);
-        let mut api = GupaxP2poolApi::temporary("keeps_a_payout_paid_again_at_the_same_height");
-        let dir = api.path_log.parent().unwrap().to_path_buf();
+        let dir = tempfile::tempdir().unwrap();
+        let mut api = GupaxP2poolApi::temporary(dir.path());
         let found_blocks = write_found_blocks(
-            &dir,
+            dir.path(),
             json!([
                 {"height": 3654400, "hash": HASH_ORPHANED},
                 {"height": 3654400, "hash": HASH_3654400},
@@ -1094,9 +1141,9 @@ mod tests {
             .unwrap()
             .block_on(remove_orphaned_payouts(
                 &api,
-                &client(),
+                &client().unwrap(),
                 &rpc_at(server.url()),
-                &found_blocks,
+                &read_found_blocks(&found_blocks).unwrap(),
                 None,
                 &Payouts::new(),
                 &mut results,
@@ -1105,7 +1152,6 @@ mod tests {
 
         assert_eq!(results, ["Orphaned payouts removed: 0"]);
         assert!(api.lock().unwrap().has_payout(3654400));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -1125,11 +1171,12 @@ mod tests {
             .mock("POST", "/get_transactions")
             .with_body(coinbase.to_string())
             .create();
-        let api =
-            GupaxP2poolApi::temporary("keeps_the_payout_of_the_block_replacing_an_orphaned_one");
-        let dir = api.path_log.parent().unwrap().to_path_buf();
-        let found_blocks =
-            write_found_blocks(&dir, json!([{"height": 3654401, "hash": HASH_ORPHANED}]));
+        let dir = tempfile::tempdir().unwrap();
+        let api = GupaxP2poolApi::temporary(dir.path());
+        let found_blocks = write_found_blocks(
+            dir.path(),
+            json!([{"height": 3654401, "hash": HASH_ORPHANED}]),
+        );
         let orphaned = (
             "2026-04-17 11:00:00.1234".to_string(),
             AtomicUnit::from_u64(7),
@@ -1137,7 +1184,7 @@ mod tests {
         );
         let api = Arc::new(Mutex::new(api));
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let client = client();
+        let client = client().unwrap();
         let node = rpc_at(server.url());
         let pair = view_pair(ADDRESS, VIEW_KEY).unwrap();
 
@@ -1151,7 +1198,7 @@ mod tests {
                     &api,
                     &client,
                     &node,
-                    &found_blocks,
+                    &read_found_blocks(&found_blocks).unwrap(),
                     pair,
                     &listed,
                     &mut results,
@@ -1163,7 +1210,6 @@ mod tests {
                 "2026-04-17 11:01:06.0000 | 0.000274561854 XMR | Block 3,654,401\n"
             );
         }
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -1205,12 +1251,18 @@ mod tests {
         mock_observer(&mut server, "4AAAA", 404, unknown);
         mock_observer(&mut server, "4BBBB", 404, "404 page not found");
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let client = client();
+        let client = client().unwrap();
 
         // A pasted URL may end with a slash and a line break.
         let observer = format!("{}/ ", server.url());
         let payouts = runtime
-            .block_on(observer_payouts(&client, &observer, ADDRESS))
+            .block_on(observer_payouts(
+                &client,
+                &observer,
+                ADDRESS,
+                None,
+                u64::MAX,
+            ))
             .unwrap();
         assert_eq!(payouts.len(), 21);
         assert_eq!(payouts[0], payout_3654401());
@@ -1219,11 +1271,23 @@ mod tests {
 
         // The observer knows no share of this address.
         let payouts = runtime
-            .block_on(observer_payouts(&client, &server.url(), "4AAAA"))
+            .block_on(observer_payouts(
+                &client,
+                &server.url(),
+                "4AAAA",
+                None,
+                u64::MAX,
+            ))
             .unwrap();
         assert!(payouts.is_empty());
         let error = runtime
-            .block_on(observer_payouts(&client, &server.url(), "4BBBB"))
+            .block_on(observer_payouts(
+                &client,
+                &server.url(),
+                "4BBBB",
+                None,
+                u64::MAX,
+            ))
             .unwrap_err();
         assert!(format!("{error:#}").contains("404 Not Found"));
     }
@@ -1253,12 +1317,13 @@ mod tests {
                 "../../tests/fixtures/payouts/node_coinbases_3654400_3654402.json"
             ))
             .create();
-        let api = GupaxP2poolApi::temporary("view_key_scan_resumes_after_the_last_block");
+        let dir = tempfile::tempdir().unwrap();
+        let api = GupaxP2poolApi::temporary(dir.path());
         GupaxP2poolApi::write_scan(&api.path_scan, 3700000, "4AAAA").unwrap();
         GupaxP2poolApi::write_scan(&api.path_scan, 3654400, ADDRESS).unwrap();
         let api = Arc::new(Mutex::new(api));
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let client = client();
+        let client = client().unwrap();
         let node = rpc_at(server.url());
         let pair = view_pair(ADDRESS, VIEW_KEY).unwrap();
         // A node at height 3,654,463, so the block 3,654,402 is final.
@@ -1284,7 +1349,51 @@ mod tests {
         runtime.block_on(scanned).unwrap();
         assert_eq!(results, ["Missing payouts added: 0"]);
         headers.assert();
-        std::fs::remove_dir_all(api.lock().unwrap().path_log.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn observer_sync_resumes_after_the_final_blocks() {
+        let mut server = mockito::Server::new();
+        let general_fund =
+            include_str!("../../tests/fixtures/payouts/observer_payouts_general_fund.json");
+        let full = mock_observer(&mut server, ADDRESS, 200, general_fund).expect(1);
+        let mut recent: Vec<serde_json::Value> = serde_json::from_str(general_fund).unwrap();
+        recent.retain(|payout| payout["main_height"].as_u64() >= Some(3654400));
+        let resumed = server
+            .mock("GET", format!("/api/payouts/{ADDRESS}").as_str())
+            .match_query(Matcher::Exact("limit=0&from_height=3654400".to_string()))
+            .with_body(serde_json::to_string(&recent).unwrap())
+            .expect(1)
+            .create();
+        mock_node(&mut server);
+        let dir = tempfile::tempdir().unwrap();
+        let mut api = GupaxP2poolApi::temporary(dir.path());
+        api.address = ADDRESS.to_string();
+        api.observer = server.url();
+        api.found_blocks = write_found_blocks(
+            dir.path(),
+            json!([{"height": 3654400, "hash": HASH_3654400}]),
+        );
+        let host = server.host_with_port();
+        let (ip, rpc) = host.split_once(':').unwrap();
+        let sources = SyncSources::new(&api, &node(ip, rpc));
+        let api = Arc::new(Mutex::new(api));
+
+        sync(&api, &sources);
+        assert_eq!(
+            api.lock().unwrap().sync,
+            "Missing payouts added: 21. Orphaned payouts removed: 0"
+        );
+        // The node is at height 3,774,988, so the block 3,774,927 is the last final one.
+        assert_eq!(api.lock().unwrap().read_scan(ADDRESS), Some(3774928));
+        // The oldest block found by the pool comes before the final blocks of the first sync.
+        sync(&api, &sources);
+        assert_eq!(
+            api.lock().unwrap().sync,
+            "Missing payouts added: 0. Orphaned payouts removed: 0"
+        );
+        full.assert();
+        resumed.assert();
     }
 
     #[test]
@@ -1294,11 +1403,13 @@ mod tests {
             include_str!("../../tests/fixtures/payouts/observer_payouts_general_fund.json");
         let observer = mock_observer(&mut server, ADDRESS, 200, general_fund).expect(1);
         mock_node(&mut server);
-        let mut api = GupaxP2poolApi::temporary("sync_sources_priority");
-        let dir = api.path_log.parent().unwrap().to_path_buf();
+        let dir = tempfile::tempdir().unwrap();
+        let mut api = GupaxP2poolApi::temporary(dir.path());
         api.address = ADDRESS.to_string();
-        api.found_blocks =
-            write_found_blocks(&dir, json!([{"height": 3654400, "hash": HASH_ORPHANED}]));
+        api.found_blocks = write_found_blocks(
+            dir.path(),
+            json!([{"height": 3654400, "hash": HASH_ORPHANED}]),
+        );
         let orphaned = (
             "2026-04-17 10:59:38.0000".to_string(),
             AtomicUnit::from_u64(1),
@@ -1313,7 +1424,7 @@ mod tests {
             let mut api = api.lock().unwrap();
             api.view_key = view_key.to_string();
             api.observer = observer.to_string();
-            SyncSources::new(&api, Some(&node))
+            SyncSources::new(&api, &node)
         };
 
         // The observer adds the missing payouts, then the orphaned one is removed.
@@ -1339,7 +1450,6 @@ mod tests {
         sync(&api, &sources("", ""));
         assert_eq!(api.lock().unwrap().sync, "Orphaned payouts removed: 0");
         assert!(!api.lock().unwrap().sync_failed);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -1347,13 +1457,14 @@ mod tests {
         // This node accepts connections and never answers.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let mut api = GupaxP2poolApi::temporary("stop_a_sync_waiting_for_the_node");
+        let dir = tempfile::tempdir().unwrap();
+        let mut api = GupaxP2poolApi::temporary(dir.path());
         api.address = ADDRESS.to_string();
         api.view_key = VIEW_KEY.to_string();
         let node = node("127.0.0.1", &port.to_string());
         let api = Arc::new(Mutex::new(api));
 
-        assert!(start(&mut api.lock().unwrap(), &api, Some(&node)));
+        assert!(start(&mut api.lock().unwrap(), &api, &node));
         // Let the request reach the node.
         std::thread::sleep(Duration::from_millis(200));
         api.lock().unwrap().stop_sync = true;
@@ -1365,17 +1476,12 @@ mod tests {
 
         let api = api.lock().unwrap();
         assert_eq!(api.sync, "Stopped");
-        std::fs::remove_dir_all(api.path_log.parent().unwrap()).unwrap();
     }
 
     #[test]
     fn view_key_in_a_file() {
-        let dir = std::env::temp_dir().join(format!(
-            "gupax_test_view_key_in_a_file_{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("view_key");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("view_key");
         // Output of the viewkey command of monero-wallet-cli.
         let public = "a".repeat(64);
         std::fs::write(&file, format!("secret: {VIEW_KEY}\npublic: {public}\n")).unwrap();
@@ -1386,7 +1492,7 @@ mod tests {
             read_view_key(&file),
             Err("View key file: no key found".to_string())
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_file(&file).unwrap();
         assert!(
             read_view_key(&file)
                 .unwrap_err()

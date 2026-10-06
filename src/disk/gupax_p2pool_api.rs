@@ -75,14 +75,11 @@ impl GupaxP2poolApi {
     }
 
     #[cfg(test)]
-    // Creates the files in a new temporary directory named after [name].
-    pub fn temporary(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("gupax_test_{name}_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        Self::create_all_files(&dir).unwrap();
+    // Creates the files in the directory [dir].
+    pub fn temporary(dir: &Path) -> Self {
+        Self::create_all_files(dir).unwrap();
         let mut api = Self::new();
-        api.fill_paths(&dir);
+        api.fill_paths(dir);
         api.read_all_files_and_update().unwrap();
         api
     }
@@ -214,16 +211,11 @@ impl GupaxP2poolApi {
         self.update_payout_strings();
     }
 
-    // Height of the block of a formatted payout line.
-    pub fn payout_height(line: &str) -> Option<u64> {
-        line.rsplit_once("Block ")?.1.replace(',', "").parse().ok()
-    }
-
     #[cfg(test)]
     pub fn has_payout(&self, height: u64) -> bool {
         self.log
             .lines()
-            .any(|line| Self::payout_height(line) == Some(height))
+            .any(|line| PayoutOrd::payout_height(line) == Some(height))
     }
 
     // Records the block of the pool that P2Pool announces in [line], with its payout if any,
@@ -264,7 +256,8 @@ impl GupaxP2poolApi {
         let mut lines = self.read_lines()?;
         let count = lines.len();
         lines.retain(|line| {
-            let Some(height) = Self::payout_height(line).filter(|height| heights.contains(height))
+            let Some(height) =
+                PayoutOrd::payout_height(line).filter(|height| heights.contains(height))
             else {
                 return true;
             };
@@ -291,7 +284,7 @@ impl GupaxP2poolApi {
         // A block may pay several addresses of the user: a payout is told apart by block and amount.
         let mut paid: std::collections::HashMap<u64, Vec<u64>> = std::collections::HashMap::new();
         for line in &lines {
-            if let Some(height) = Self::payout_height(line) {
+            if let Some(height) = PayoutOrd::payout_height(line) {
                 let amount = PayoutOrd::parse_formatted_payout_line(line).1.to_u64();
                 paid.entry(height).or_default().push(amount);
             }
@@ -337,7 +330,7 @@ impl GupaxP2poolApi {
         Ok(())
     }
 
-    // Next block to scan for the payouts of [address].
+    // Block from which to sync the payouts of [address].
     pub fn read_scan(&self, address: &str) -> Option<u64> {
         let scan = read_to_string(File::Scan, &self.path_scan).ok()?;
         scan.lines().find_map(|line| {
@@ -350,7 +343,7 @@ impl GupaxP2poolApi {
         })
     }
 
-    // Writes [height] as the next block to scan for the payouts of [address] in the file [path].
+    // Writes [height] as the block from which to sync the payouts of [address], in the file [path].
     pub fn write_scan(path: &Path, height: u64, address: &str) -> Result<(), TomlError> {
         // The file may have been deleted since Gupax started.
         let scan = match fs::read_to_string(path) {

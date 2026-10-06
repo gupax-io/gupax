@@ -878,7 +878,9 @@ impl Helper {
                 };
                 if last_payout_sync.is_none_or(|last| last.elapsed() >= interval) {
                     let node = gui_api.lock().unwrap().current_node.clone();
-                    if payout_sync::start(&mut api, &gupax_p2pool_api, node.as_ref()) {
+                    if let Some(node) = node
+                        && payout_sync::start(&mut api, &gupax_p2pool_api, &node)
+                    {
                         last_payout_sync = Some(Instant::now());
                     }
                 }

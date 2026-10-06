@@ -19,7 +19,7 @@ pub const POOL_TOML: &str = "pool.toml";
 // Lives within the Gupax OS data directory.
 // ~/.local/share/gupax/p2pool/
 // ├─ payout_log  // Raw log lines of payouts received
-// ├─ scan        // Next block to scan with the private view key, per address
+// ├─ scan        // Block from which to sync the payouts, per address
 #[cfg(target_os = "windows")]
 pub const GUPAX_P2POOL_API_DIRECTORY: &str = r"p2pool\";
 #[cfg(target_family = "unix")]

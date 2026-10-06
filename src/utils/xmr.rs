@@ -219,14 +219,19 @@ impl PayoutOrd {
             AtomicUnit::new()
         };
         // Block
-        let block = match P2POOL_REGEX.block_comma.find(line) {
-            Some(b) => HumanNumber::from_str(b.as_str()),
+        let block = match Self::payout_height(line) {
+            Some(height) => HumanNumber::from_u64(height),
             None => {
                 error!("P2Pool | Block parse error: [{line}]");
                 HumanNumber::unknown()
             }
         };
         (date, atomic_unit, block)
+    }
+
+    // Height of the block of a formatted payout line.
+    pub fn payout_height(line: &str) -> Option<u64> {
+        line.rsplit_once("Block ")?.1.replace(',', "").parse().ok()
     }
 
     // Number of payouts and their total.

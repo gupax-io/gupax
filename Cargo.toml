@@ -146,6 +146,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 [dev-dependencies]
 egui = {version="0.36.2", features=["callstack"]}
 mockito = "1.7.2"
+tempfile = "3.27.0"
 # egui = {git="https://github.com/emilk/egui", features=["callstack"]}
 
 

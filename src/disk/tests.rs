@@ -164,7 +164,8 @@ mod test {
         use crate::disk::gupax_p2pool_api::GupaxP2poolApi;
 
         // Create the files.
-        let mut api = GupaxP2poolApi::temporary("create_and_serde_gupax_p2pool_api");
+        let dir = tempfile::tempdir().unwrap();
+        let mut api = GupaxP2poolApi::temporary(dir.path());
         println!("{:#?}", api);
 
         // Write some fake data.
@@ -184,7 +185,6 @@ mod test {
             api.log
                 .contains("2022-01-27 01:30:23.1377 | 0.000000000001 XMR | Block 2,642,816")
         );
-        std::fs::remove_dir_all(api.path_log.parent().unwrap()).unwrap();
     }
 
     #[test]
@@ -246,7 +246,8 @@ mod test {
     fn remove_orphaned_payouts() {
         use crate::disk::gupax_p2pool_api::GupaxP2poolApi;
 
-        let mut api = GupaxP2poolApi::temporary("remove_orphaned_payouts");
+        let dir = tempfile::tempdir().unwrap();
+        let mut api = GupaxP2poolApi::temporary(dir.path());
         let payout = |xmr: &str, height: u64| {
             format!(
                 "NOTICE  2026-10-01 10:00:00.0000 P2Pool Your wallet 4AAA got a payout of {xmr} XMR in block {height}"
@@ -276,7 +277,6 @@ mod test {
             "2026-10-01 10:00:00.0000 | 0.000000000002 XMR | Block 3,500,001\n\
              2026-10-01 10:00:00.0000 | 0.000000000003 XMR | Block 3,500,002\n"
         );
-        std::fs::remove_dir_all(api.path_log.parent().unwrap()).unwrap();
     }
 
     #[test]
@@ -284,7 +284,8 @@ mod test {
         use crate::disk::gupax_p2pool_api::GupaxP2poolApi;
         use crate::xmr::AtomicUnit;
 
-        let mut api = GupaxP2poolApi::temporary("merge_synced_payouts");
+        let dir = tempfile::tempdir().unwrap();
+        let mut api = GupaxP2poolApi::temporary(dir.path());
         let payout = |date: &str, xmr: &str, height: u64| {
             format!(
                 "NOTICE  {date} P2Pool Your wallet 4AAA got a payout of {xmr} XMR in block {height}"
@@ -325,14 +326,14 @@ mod test {
              2026-10-01 10:00:00.0000 | 0.000000000030 XMR | Block 3,500,001\n\
              2026-10-01 10:00:00.1234 | 0.000000000002 XMR | Block 3,500,001\n"
         );
-        std::fs::remove_dir_all(api.path_log.parent().unwrap()).unwrap();
     }
 
     #[test]
     fn record_the_blocks_found_by_p2pool() {
         use crate::disk::gupax_p2pool_api::GupaxP2poolApi;
 
-        let mut api = GupaxP2poolApi::temporary("record_the_blocks_found_by_p2pool");
+        let dir = tempfile::tempdir().unwrap();
+        let mut api = GupaxP2poolApi::temporary(dir.path());
         let found = |payout: &str, height: u64| {
             format!(
                 "NOTICE  2026-10-01 10:00:00.1234 P2Pool Your wallet 4AAA {payout} in block {height}"
@@ -357,7 +358,6 @@ mod test {
             api.log,
             "2026-10-01 10:00:00.1234 | 0.000000000003 XMR | Block 3,500,001\n"
         );
-        std::fs::remove_dir_all(api.path_log.parent().unwrap()).unwrap();
     }
 
     #[test]

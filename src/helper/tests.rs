@@ -609,13 +609,9 @@ Uptime         = 0h 2m 4s
 
     #[test]
     fn arguments_of_a_params_file() {
-        let dir = std::env::temp_dir().join(format!(
-            "gupax_test_arguments_of_a_params_file_{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
         std::fs::write(
-            dir.join("p2pool.conf"),
+            dir.path().join("p2pool.conf"),
             "# P2Pool parameters\n\
              wallet = 4AAA\n\
              host 192.168.1.5 # node on the LAN\n\
@@ -631,7 +627,7 @@ Uptime         = 0h 2m 4s
                 .collect::<Vec<_>>()
         };
         assert_eq!(
-            Helper::read_params_file(&args(&["--params-file", "p2pool.conf"]), &dir),
+            Helper::read_params_file(&args(&["--params-file", "p2pool.conf"]), dir.path()),
             args(&[
                 "--wallet",
                 "4AAA",
@@ -645,10 +641,9 @@ Uptime         = 0h 2m 4s
             ])
         );
         assert_eq!(
-            Helper::read_params_file(&args(&["--mini"]), &dir),
+            Helper::read_params_file(&args(&["--mini"]), dir.path()),
             args(&["--mini"])
         );
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

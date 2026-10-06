@@ -120,10 +120,6 @@ impl HumanNumber {
         Self("???".to_string())
     }
     #[inline]
-    pub fn from_str(s: &str) -> Self {
-        Self(s.to_string())
-    }
-    #[inline]
     pub fn to_percent(f: f32) -> Self {
         if f < 0.01 {
             Self("0%".to_string())

@@ -88,7 +88,6 @@ pub struct P2poolRegex {
     pub payout_float: Regex,
     pub block: Regex,
     pub block_int: Regex,
-    pub block_comma: Regex,
 }
 
 impl P2poolRegex {
@@ -101,7 +100,6 @@ impl P2poolRegex {
             payout_float: Regex::new("[0-9].[0-9]{12}").unwrap(), // Assumes 12 digits after the dot.
             block: Regex::new("block [0-9]{7}").unwrap(), // Monero blocks will be 7 digits for... the next 10,379 years
             block_int: Regex::new("[0-9]{7}").unwrap(),
-            block_comma: Regex::new("[0-9],[0-9]{3},[0-9]{3}").unwrap(),
         }
     }
 }
@@ -349,7 +347,6 @@ mod test {
     fn build_p2pool_regex() {
         let r = P2poolRegex::new();
         let text = "NOTICE  2022-11-11 11:11:11.1111 P2Pool You received a payout of 0.111111111111 XMR in block 1111111";
-        let text2 = "2022-11-11 11:11:11.1111 | 0.111111111111 XMR | Block 1,111,111";
         assert_eq!(
             r.payout.find(text).unwrap().as_str(),
             "payout of 0.111111111111 XMR"
@@ -364,7 +361,6 @@ mod test {
         );
         assert_eq!(r.block.find(text).unwrap().as_str(), "block 1111111");
         assert_eq!(r.block_int.find(text).unwrap().as_str(), "1111111");
-        assert_eq!(r.block_comma.find(text2).unwrap().as_str(), "1,111,111");
     }
 
     #[test]
