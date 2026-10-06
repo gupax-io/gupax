@@ -10,6 +10,7 @@ use log::warn;
 use std::process::exit;
 
 use crate::app::App;
+use crate::disk::state::State;
 use crate::miscs::print_disk_file;
 use crate::miscs::print_gupax_p2pool_api;
 use crate::resets::reset;
@@ -83,7 +84,9 @@ pub enum GupaxData {
     ResetNodes,
     #[command(about = "Reset the manual pool list in the [XMRig] tab")]
     ResetPools,
-    #[command(about = "Reset the permanent P2Pool stats that appear in the [Status] tab")]
+    #[command(
+        about = "Reset the permanent P2Pool stats that appear in the [Status] tab, and their observer"
+    )]
     ResetPayouts,
     #[command(about = "Reset all Gupax state (your settings)")]
     ResetAll,
@@ -171,7 +174,12 @@ pub fn parse_args<S: Into<String>>(mut app: App, args: &Cli, panic: S) -> App {
                 }
             }
             GupaxData::ResetPayouts => {
-                if let Ok(()) = reset_gupax_p2pool_api(&app.gupax_p2pool_api_path) {
+                // The observer would add the payouts back.
+                let observer = State::get(&app.state_path).and_then(|mut state| {
+                    state.p2pool.observer.clear();
+                    state.save(&app.state_path)
+                });
+                if observer.is_ok() && reset_gupax_p2pool_api(&app.gupax_p2pool_api_path).is_ok() {
                     println!("\nGupaxP2poolApi reset ... OK");
                     exit(0)
                 } else {

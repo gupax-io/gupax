@@ -556,23 +556,110 @@ Uptime         = 0h 2m 4s
     }
 
     #[test]
-    fn first_node_of_p2pool() {
+    fn nodes_of_p2pool() {
         use crate::disk::node::Node;
-        let args = |arguments: &str| arguments.split(' ').map(String::from).collect::<Vec<_>>();
-        let node = |ip: &str, rpc: &str, zmq: &str| Node {
-            ip: ip.to_string(),
-            rpc: rpc.to_string(),
-            zmq: zmq.to_string(),
+        use crate::helper::p2pool::{P2poolHost, P2poolNodes};
+        let nodes = |arguments: &str| {
+            P2poolNodes::from_args(&arguments.split(' ').map(String::from).collect::<Vec<_>>())
+        };
+        let host = |ip: &str, rpc: &str, zmq: &str| P2poolHost {
+            node: Node {
+                ip: ip.to_string(),
+                rpc: rpc.to_string(),
+                zmq: zmq.to_string(),
+            },
+            ..Default::default()
         };
         let backup = "--host 127.0.0.1 --rpc-port 18089 --zmq-port 18084 --host node2.monerodevs.org --rpc-port 18081 --zmq-port 18083";
         assert_eq!(
-            Helper::first_node(&args(backup)),
-            node("127.0.0.1", "18089", "18084")
+            nodes(backup).hosts,
+            [
+                host("127.0.0.1", "18089", "18084"),
+                host("node2.monerodevs.org", "18081", "18083")
+            ]
         );
         // P2Pool connects to its default node without --host.
         assert_eq!(
-            Helper::first_node(&args("--mini --rpc-port 18089")),
-            node("127.0.0.1", "18089", "18083")
+            nodes("--mini --rpc-port 18089").hosts,
+            [host("127.0.0.1", "18089", "18083")]
         );
+        // The ports before the first --host belong to the default node, which comes first,
+        // and the next host keeps them.
+        assert_eq!(
+            nodes("--rpc-port 18089 --zmq-port 18084 --host 192.168.1.5").hosts,
+            [
+                host("127.0.0.1", "18089", "18084"),
+                host("192.168.1.5", "18089", "18084")
+            ]
+        );
+        // The RPC options belong to the last host, the proxy to P2Pool.
+        let tor = nodes("--socks5 127.0.0.1:9050 --host xyz.onion --rpc-login user:pass --rpc-ssl");
+        assert_eq!(
+            tor,
+            P2poolNodes {
+                hosts: vec![P2poolHost {
+                    rpc_login: "user:pass".to_string(),
+                    rpc_ssl: true,
+                    ..host("xyz.onion", "18081", "18083")
+                }],
+                socks5: "127.0.0.1:9050".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn arguments_of_a_params_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "gupax_test_arguments_of_a_params_file_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("p2pool.conf"),
+            "# P2Pool parameters\n\
+             wallet = 4AAA\n\
+             host 192.168.1.5 # node on the LAN\n\
+             rpc-login \"user:p\\\"a ss\"\n\
+             rpc-ssl\n\
+             socks5=127.0.0.1:9050\n",
+        )
+        .unwrap();
+        let args = |arguments: &[&str]| {
+            arguments
+                .iter()
+                .map(|arg| arg.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            Helper::read_params_file(&args(&["--params-file", "p2pool.conf"]), &dir),
+            args(&[
+                "--wallet",
+                "4AAA",
+                "--host",
+                "192.168.1.5",
+                "--rpc-login",
+                "user:p\"a ss",
+                "--rpc-ssl",
+                "--socks5",
+                "127.0.0.1:9050"
+            ])
+        );
+        assert_eq!(
+            Helper::read_params_file(&args(&["--mini"]), &dir),
+            args(&["--mini"])
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn head_tail_of_an_address() {
+        let address = "44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A";
+        assert_eq!(
+            Helper::head_tail_of_monero_address(address),
+            "44AFFq5k...VGQBEP3A"
+        );
+        // A character pasted in Custom args may span several bytes.
+        let pasted = format!("{}\u{200B}{}", &address[..7], &address[7..]);
+        assert_eq!(Helper::head_tail_of_monero_address(&pasted), "???");
     }
 }

@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{disk::state::*, utils::macros::arc_mut};
+use crate::{disk::state::*, helper::payout_sync, utils::macros::arc_mut};
 use log::*;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -34,13 +34,12 @@ pub struct FileWindow {
     pub picked_xp: bool,          // Did the user pick a path for xmrig-proxy?
     pub picked_node: bool,        // Did the user pick a path for node?
     pub picked_nodedb: bool,      // Did the user pick a path for node?
-    pub picked_view_key: bool,    // Did the user pick a file for the private view key?
     pub p2pool_path: String,      // The picked p2pool path
     pub node_path: String,        // The picked node path
     pub nodedb_path: String,      // The picked node path
     pub xmrig_path: String,       // The picked xmrig path
     pub xmrig_proxy_path: String, // The picked xmrig-proxy path
-    pub view_key_path: String,    // The picked private view key path
+    pub view_key: Option<Result<String, String>>, // The private view key of the picked file, or the error
 }
 
 impl FileWindow {
@@ -52,13 +51,12 @@ impl FileWindow {
             picked_xp: false,
             picked_node: false,
             picked_nodedb: false,
-            picked_view_key: false,
             p2pool_path: String::new(),
             node_path: String::new(),
             nodedb_path: String::new(),
             xmrig_path: String::new(),
             xmrig_proxy_path: String::new(),
-            view_key_path: String::new(),
+            view_key: None,
         })
     }
 }
@@ -151,8 +149,8 @@ impl Gupax {
                         file_window.lock().unwrap().picked_nodedb = true;
                     }
                     ViewKey => {
-                        file_window.lock().unwrap().view_key_path = path.display().to_string();
-                        file_window.lock().unwrap().picked_view_key = true;
+                        let key = payout_sync::read_view_key(&path);
+                        file_window.lock().unwrap().view_key = Some(key);
                     }
                 };
             } else {

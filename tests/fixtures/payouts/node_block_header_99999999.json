@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": -2,
+    "message": "Requested block height: 99999999 greater than current top block height: 3776790"
+  },
+  "id": "0",
+  "jsonrpc": "2.0"
+}

@@ -54,7 +54,7 @@ pub fn get_exe_dir() -> Result<String, std::io::Error> {
 #[cold]
 #[inline(never)]
 pub fn clean_dir() -> Result<(), anyhow::Error> {
-    use log::info;
+    use log::{info, warn};
     use regex::Regex;
     let regex = Regex::new("^gupax_update_[A-Za-z0-9]{10}$").unwrap();
     for entry in std::fs::read_dir(get_exe_dir()?)? {
@@ -99,41 +99,17 @@ pub fn print_disk_file(path: &PathBuf) {
 #[cold]
 #[inline(never)]
 pub fn print_gupax_p2pool_api(gupax_p2pool_api: &Arc<Mutex<GupaxP2poolApi>>) {
-    let api = gupax_p2pool_api.lock().unwrap();
-    let log = match std::fs::read_to_string(&api.path_log) {
-        Ok(string) => string,
-        Err(e) => {
-            error!("{e}");
-            exit(1);
-        }
-    };
-    let payout = match std::fs::read_to_string(&api.path_payout) {
-        Ok(string) => string,
-        Err(e) => {
-            error!("{e}");
-            exit(1);
-        }
-    };
-    let xmr = match std::fs::read_to_string(&api.path_xmr) {
-        Ok(string) => string,
-        Err(e) => {
-            error!("{e}");
-            exit(1);
-        }
-    };
-    let xmr = match xmr.trim().parse::<u64>() {
-        Ok(o) => crate::xmr::AtomicUnit::from_u64(o),
-        Err(e) => {
-            warn!("GupaxP2poolApi | [xmr] parse error: {e}");
-            exit(1);
-        }
-    };
+    let mut api = gupax_p2pool_api.lock().unwrap();
+    if let Err(e) = api.read_all_files_and_update() {
+        error!("{e}");
+        exit(1);
+    }
     println!(
         "{}\nTotal payouts | {}\nTotal XMR     | {} ({} Atomic Units)",
-        log,
-        payout.trim(),
-        xmr,
-        xmr.to_u64()
+        api.log,
+        api.payout_u64,
+        api.xmr,
+        api.xmr.to_u64()
     );
     exit(0);
 }
@@ -164,7 +140,6 @@ use chrono::Local;
 use egui::TextStyle;
 use egui::Ui;
 use log::error;
-use log::warn;
 use reqwest_middleware::ClientWithMiddleware;
 use std::path::PathBuf;
 use std::process::exit;

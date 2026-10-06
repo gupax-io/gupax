@@ -506,6 +506,12 @@ impl eframe::App for GuiApp {
             || app.og_pool_vec != app.pool_vec;
         drop(og);
         app.diff = diff;
+        // The payout sync uses the observer of the Payouts tab.
+        app.gupax_p2pool_api
+            .lock()
+            .unwrap()
+            .observer
+            .clone_from(&app.state.p2pool.observer);
 
         // replace backup host by custom ones when user is in p2pool advanced sub menu
         // Only if the backup host is different from the custom ones

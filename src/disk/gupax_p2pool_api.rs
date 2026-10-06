@@ -16,6 +16,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use super::*;
+use crate::helper::p2pool::P2poolNodes;
+use crate::utils::regex::{P2POOL_REGEX, p2pool_no_payout_height};
 //---------------------------------------------------------------------------------------------------- Gupax-P2Pool API
 #[derive(Clone, Debug)]
 pub struct GupaxP2poolApi {
@@ -28,15 +30,15 @@ pub struct GupaxP2poolApi {
     pub payout_high: String, // Same as above but high -> low
     pub xmr: AtomicUnit,    // XMR stored as atomic units
     pub path_log: PathBuf,  // Path to [log]
-    pub path_payout: PathBuf, // Path to [payout]
-    pub path_xmr: PathBuf,  // Path to [xmr]
     pub path_scan: PathBuf, // Path to [scan]
     pub sync: String,       // Result of the last payouts sync
     pub syncing: bool,
     pub stop_sync: bool,
+    pub sync_failed: bool,     // Did the last payouts sync fail?
     pub found_blocks: PathBuf, // Blocks found by the pool, in the data API of the running P2Pool
     pub address: String,       // Address the running P2Pool pays
-    pub observer: String,      // Observer set when P2Pool started, used by the automatic sync
+    pub nodes: P2poolNodes,    // Monero nodes of the running P2Pool
+    pub observer: String,      // Observer used to sync the payouts
     pub view_key: String,      // Private view key used to sync the payouts, kept in memory only
 }
 
@@ -58,15 +60,15 @@ impl GupaxP2poolApi {
             payout_low: String::new(),
             payout_high: String::new(),
             xmr: AtomicUnit::new(),
-            path_xmr: PathBuf::new(),
-            path_payout: PathBuf::new(),
             path_log: PathBuf::new(),
             path_scan: PathBuf::new(),
             sync: String::new(),
             syncing: false,
             stop_sync: false,
+            sync_failed: false,
             found_blocks: PathBuf::new(),
             address: String::new(),
+            nodes: P2poolNodes::default(),
             observer: String::new(),
             view_key: String::new(),
         }
@@ -87,24 +89,17 @@ impl GupaxP2poolApi {
 
     pub fn fill_paths(&mut self, gupax_p2pool_dir: &Path) {
         let mut path_log = gupax_p2pool_dir.to_path_buf();
-        let mut path_payout = gupax_p2pool_dir.to_path_buf();
-        let mut path_xmr = gupax_p2pool_dir.to_path_buf();
         let mut path_scan = gupax_p2pool_dir.to_path_buf();
         path_log.push(GUPAX_P2POOL_API_LOG);
-        path_payout.push(GUPAX_P2POOL_API_PAYOUT);
-        path_xmr.push(GUPAX_P2POOL_API_XMR);
         path_scan.push(GUPAX_P2POOL_API_SCAN);
         *self = Self {
             path_log,
-            path_payout,
-            path_xmr,
             path_scan,
             ..std::mem::take(self)
         };
     }
 
     pub fn create_all_files(gupax_p2pool_dir: &Path) -> Result<(), TomlError> {
-        use std::io::Write;
         for file in GUPAX_P2POOL_API_FILE_ARRAY {
             let mut path = gupax_p2pool_dir.to_path_buf();
             path.push(file);
@@ -116,11 +111,7 @@ impl GupaxP2poolApi {
                 continue;
             }
             match std::fs::File::create(&path) {
-                Ok(mut f) => {
-                    match file {
-                        GUPAX_P2POOL_API_PAYOUT | GUPAX_P2POOL_API_XMR => writeln!(f, "0")?,
-                        _ => (),
-                    }
+                Ok(_) => {
                     info!("GupaxP2poolApi | [{}] create ... OK", path.display());
                 }
                 Err(e) => {
@@ -137,39 +128,19 @@ impl GupaxP2poolApi {
     }
 
     pub fn read_all_files_and_update(&mut self) -> Result<(), TomlError> {
-        let payout_u64 = match read_to_string(File::Payout, &self.path_payout)?
-            .trim()
-            .parse::<u64>()
-        {
-            Ok(o) => o,
-            Err(e) => {
-                warn!("GupaxP2poolApi | [payout] parse error: {e}");
-                return Err(TomlError::Parse("payout"));
-            }
-        };
-        let xmr = match read_to_string(File::Xmr, &self.path_xmr)?
-            .trim()
-            .parse::<u64>()
-        {
-            Ok(o) => AtomicUnit::from_u64(o),
-            Err(e) => {
-                warn!("GupaxP2poolApi | [xmr] parse error: {e}");
-                return Err(TomlError::Parse("xmr"));
-            }
-        };
-        let payout = HumanNumber::from_u64(payout_u64);
         let log = read_to_string(File::Log, &self.path_log)?;
+        self.update(log);
+        Ok(())
+    }
+
+    // Replaces the history with [log], and the totals with its totals.
+    fn update(&mut self, log: String) {
         self.payout_ord.update_from_payout_log(&log);
         self.update_payout_strings();
-        *self = Self {
-            log,
-            payout,
-            payout_u64,
-            xmr,
-            ..std::mem::take(self)
-        };
+        (self.payout_u64, self.xmr) = self.payout_ord.total();
+        self.payout = HumanNumber::from_u64(self.payout_u64);
+        self.log = log;
         self.update_log_rev();
-        Ok(())
     }
 
     // Completely delete the [p2pool] folder and create defaults.
@@ -248,36 +219,66 @@ impl GupaxP2poolApi {
         line.rsplit_once("Block ")?.1.replace(',', "").parse().ok()
     }
 
+    #[cfg(test)]
     pub fn has_payout(&self, height: u64) -> bool {
         self.log
             .lines()
             .any(|line| Self::payout_height(line) == Some(height))
     }
 
-    // Removes the payouts received in the blocks at [heights] and updates [self] and the files.
-    // Returns the number of payouts removed.
-    pub fn remove_payouts(&mut self, heights: &[u64]) -> Result<u64, TomlError> {
+    // Records the block of the pool that P2Pool announces in [line], with its payout if any,
+    // in place of the payouts at its height: they came from a block it replaced.
+    pub fn record_found_block(&mut self, line: &str) -> Result<(), TomlError> {
+        let payout = P2POOL_REGEX
+            .payout
+            .is_match(line)
+            .then(|| PayoutOrd::parse_raw_payout_line(line));
+        let height = match &payout {
+            Some((_, _, height)) => *height,
+            None => p2pool_no_payout_height(line),
+        };
+        if let Some(height) = height
+            && let Err(e) = self.remove_payouts(&[height], &[])
+        {
+            warn!("GupaxP2poolApi | Payouts of block {height} kept: {e}");
+        }
+        if let Some((date, atomic_unit, height)) = payout {
+            let block = height.map_or_else(HumanNumber::unknown, HumanNumber::from_u64);
+            let formatted_log_line = Self::format_payout(&date, &atomic_unit, &block);
+            self.add_payout(&formatted_log_line, date, atomic_unit, block);
+            Self::disk_append(&formatted_log_line, &self.path_log)?;
+        }
+        Ok(())
+    }
+
+    // Removes the payouts received in the blocks at [heights], except the (height, amount)
+    // payouts [kept], and updates [self] and the files. Returns the number of payouts removed.
+    pub fn remove_payouts(
+        &mut self,
+        heights: &[u64],
+        kept: &[(u64, u64)],
+    ) -> Result<u64, TomlError> {
         if heights.is_empty() {
             return Ok(0);
         }
-        // Another Gupax may have changed the files.
-        self.read_all_files_and_update()?;
-        let mut lines = Vec::new();
-        let mut removed = 0;
-        for line in self.log.lines() {
-            if Self::payout_height(line).is_some_and(|height| heights.contains(&height)) {
-                removed += 1;
-            } else {
-                lines.push(line.to_string());
-            }
-        }
-        if removed > 0 {
-            self.rewrite(&lines)?;
-        }
+        let mut lines = self.read_lines()?;
+        let count = lines.len();
+        lines.retain(|line| {
+            let Some(height) = Self::payout_height(line).filter(|height| heights.contains(height))
+            else {
+                return true;
+            };
+            let amount = PayoutOrd::parse_formatted_payout_line(line).1.to_u64();
+            kept.iter().any(|&(kept_height, kept_amount)| {
+                kept_height == height && Self::same_amount(kept_amount, amount)
+            })
+        });
+        let removed = (count - lines.len()) as u64;
+        self.rewrite(&lines)?;
         Ok(removed)
     }
 
-    // Adds the (date, atomic_unit, height) payouts of blocks missing from the history,
+    // Adds the (date, atomic_unit, height) payouts missing from the history,
     // updates [self] and the files. Returns the number of payouts added.
     pub fn merge_payouts(
         &mut self,
@@ -286,14 +287,21 @@ impl GupaxP2poolApi {
         if payouts.is_empty() {
             return Ok(0);
         }
-        // Another Gupax may have changed the files.
-        self.read_all_files_and_update()?;
-        let mut heights: std::collections::HashSet<u64> =
-            self.log.lines().filter_map(Self::payout_height).collect();
-        let mut lines: Vec<String> = self.log.lines().map(String::from).collect();
+        let mut lines = self.read_lines()?;
+        // A block may pay several addresses of the user: a payout is told apart by block and amount.
+        let mut paid: std::collections::HashMap<u64, Vec<u64>> = std::collections::HashMap::new();
+        for line in &lines {
+            if let Some(height) = Self::payout_height(line) {
+                let amount = PayoutOrd::parse_formatted_payout_line(line).1.to_u64();
+                paid.entry(height).or_default().push(amount);
+            }
+        }
         let mut added = 0;
         for (date, atomic_unit, height) in payouts {
-            if heights.insert(*height) {
+            let amounts = paid.entry(*height).or_default();
+            let amount = atomic_unit.to_u64();
+            if !amounts.iter().any(|&paid| Self::same_amount(paid, amount)) {
+                amounts.push(amount);
                 let block = HumanNumber::from_u64(*height);
                 lines.push(Self::format_payout(date, atomic_unit, &block));
                 added += 1;
@@ -307,16 +315,26 @@ impl GupaxP2poolApi {
         Ok(added)
     }
 
-    // Replaces the history with [lines] and the totals with the totals of [lines].
+    // Whether the amounts [a] and [b] of a payout are the same: an amount of the history may be
+    // truncated, 1 atomic unit lower.
+    fn same_amount(a: u64, b: u64) -> bool {
+        a.abs_diff(b) <= 1
+    }
+
+    // Lines of the history, read again since another Gupax may have changed it.
+    fn read_lines(&mut self) -> Result<Vec<String>, TomlError> {
+        self.read_all_files_and_update()?;
+        Ok(self.log.lines().map(String::from).collect())
+    }
+
+    // Replaces the history with [lines].
     fn rewrite(&mut self, lines: &[String]) -> Result<(), TomlError> {
         let log: String = lines.iter().map(|line| format!("{line}\n")).collect();
-        let xmr = lines.iter().fold(AtomicUnit::new(), |xmr, line| {
-            xmr.add_self(PayoutOrd::parse_formatted_payout_line(line).1)
-        });
-        Self::disk_replace(&log, &self.path_log)?;
-        Self::disk_overwrite(&lines.len().to_string(), &self.path_payout)?;
-        Self::disk_overwrite(&xmr.to_string(), &self.path_xmr)?;
-        self.read_all_files_and_update()
+        if log != self.log {
+            Self::disk_replace(&log, &self.path_log)?;
+            self.update(log);
+        }
+        Ok(())
     }
 
     // Next block to scan for the payouts of [address].
@@ -332,8 +350,13 @@ impl GupaxP2poolApi {
         })
     }
 
-    pub fn write_scan(&self, height: u64, address: &str) -> Result<(), TomlError> {
-        let scan = read_to_string(File::Scan, &self.path_scan)?;
+    // Writes [height] as the next block to scan for the payouts of [address] in the file [path].
+    pub fn write_scan(path: &Path, height: u64, address: &str) -> Result<(), TomlError> {
+        // The file may have been deleted since Gupax started.
+        let scan = match fs::read_to_string(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            scan => scan?,
+        };
         let mut scan: String = scan
             .lines()
             .filter(|line| {
@@ -343,15 +366,7 @@ impl GupaxP2poolApi {
             .map(|line| format!("{line}\n"))
             .collect();
         scan.push_str(&format!("{height} {address}\n"));
-        Self::disk_replace(&scan, &self.path_scan)
-    }
-
-    // Writes the log first, so a payout counted in the totals is in the log.
-    pub fn write_to_all_files(&self, formatted_log_line: &str) -> Result<(), TomlError> {
-        Self::disk_append(formatted_log_line, &self.path_log)?;
-        Self::disk_overwrite(&self.payout_u64.to_string(), &self.path_payout)?;
-        Self::disk_overwrite(&self.xmr.to_string(), &self.path_xmr)?;
-        Ok(())
+        Self::disk_replace(&scan, path)
     }
 
     pub fn disk_append(formatted_log_line: &str, path: &PathBuf) -> Result<(), TomlError> {
@@ -392,39 +407,5 @@ impl GupaxP2poolApi {
         file.sync_all()?;
         fs::rename(&tmp, path)?;
         Ok(())
-    }
-
-    pub fn disk_overwrite(string: &str, path: &PathBuf) -> Result<(), TomlError> {
-        use std::io::Write;
-        let mut file = match fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .open(path)
-        {
-            Ok(f) => f,
-            Err(e) => {
-                error!(
-                    "GupaxP2poolApi | Overwrite [{}] ... FAIL: {}",
-                    path.display(),
-                    e
-                );
-                return Err(TomlError::Io(e));
-            }
-        };
-        match writeln!(file, "{string}") {
-            Ok(_) => {
-                debug!("GupaxP2poolApi | Overwrite [{}] ... OK", path.display());
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    "GupaxP2poolApi | Overwrite [{}] ... FAIL: {}",
-                    path.display(),
-                    e
-                );
-                Err(TomlError::Io(e))
-            }
-        }
     }
 }

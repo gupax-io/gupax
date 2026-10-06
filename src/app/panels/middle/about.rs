@@ -61,9 +61,7 @@ XMRig-Proxy console byte length: {}\n
 payout: {:#?}
 payout_u64: {:#?}
 xmr: {:#?}
-path_log: {:#?}
-path_payout: {:#?}
-path_xmr: {:#?}\n
+path_log: {:#?}\n
 ------------------------------------------ WORKING STATE ------------------------------------------
 {:#?}\n
 ------------------------------------------ ORIGINAL STATE ------------------------------------------
@@ -103,8 +101,6 @@ path_xmr: {:#?}\n
 							gupax_p2pool_api.payout_u64,
 							gupax_p2pool_api.xmr,
 							gupax_p2pool_api.path_log,
-							gupax_p2pool_api.path_payout,
-							gupax_p2pool_api.path_xmr,
 							self.state,
 							self.og.lock().unwrap(),
 						);

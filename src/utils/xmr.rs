@@ -61,14 +61,6 @@ impl AtomicUnit {
         self.0
     }
 
-    #[allow(clippy::inherent_to_string_shadow_display)]
-    // This is terrible but it formats it in a different way
-    // than `Display`, but for backwards compat, changing it
-    // requires touching other code, so...
-    pub fn to_string(self) -> String {
-        self.0.to_string()
-    }
-
     // pub fn sum_vec(vec: &Vec<Self>) -> Self {
     //     let mut sum = 0;
     //     for int in vec {
@@ -235,6 +227,15 @@ impl PayoutOrd {
             }
         };
         (date, atomic_unit, block)
+    }
+
+    // Number of payouts and their total.
+    pub fn total(&self) -> (u64, AtomicUnit) {
+        let xmr = self
+            .0
+            .iter()
+            .fold(AtomicUnit::new(), |xmr, payout| xmr.add_self(payout.1));
+        (self.0.len() as u64, xmr)
     }
 
     // Takes in input of ONLY P2Pool payout logs and converts it into a usable [PayoutOrd]

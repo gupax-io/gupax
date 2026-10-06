@@ -31,10 +31,7 @@ use crate::{
         state::{Gupax, Status},
         status::{Hash, PayoutView},
     },
-    helper::{
-        p2pool::PubP2poolApi,
-        payout_sync::{self, SyncSources},
-    },
+    helper::{p2pool::PubP2poolApi, payout_sync},
     utils::constants::*,
 };
 
@@ -171,20 +168,16 @@ impl Status {
                         Gupax::spawn_file_window_thread(file_window, FileType::ViewKey);
                     }
                     let mut file_window = file_window.lock().unwrap();
-                    if file_window.picked_view_key {
-                        file_window.picked_view_key = false;
-                        // The first 64 hexadecimal characters, as in the output of
-                        // monero-wallet-cli where the private key comes first.
-                        let key = std::fs::read_to_string(&file_window.view_key_path).map(|file| {
-                            file.split(|c: char| !c.is_ascii_hexdigit())
-                                .find(|word| word.len() == 64)
-                                .map(String::from)
-                        });
-                        match key {
-                            Ok(Some(key)) => api.view_key = key,
-                            Ok(None) => api.sync = "View key file: no key found".to_string(),
-                            Err(e) => api.sync = format!("View key file read error: {e}"),
+                    // An error stays until the next file is picked.
+                    match &file_window.view_key {
+                        Some(Ok(key)) => {
+                            api.view_key.clone_from(key);
+                            file_window.view_key = None;
                         }
+                        Some(Err(e)) => {
+                            ui.label(e.as_str());
+                        }
+                        None => (),
                     }
                 });
                 ui.horizontal(|ui| {
@@ -194,10 +187,7 @@ impl Status {
                         .clicked()
                     {
                         let node = p2pool_api.lock().unwrap().current_node.clone();
-                        let view_key = api.view_key.clone();
-                        let sources =
-                            SyncSources::new(&api, node.as_ref(), view_key, observer.clone());
-                        payout_sync::start(&mut api, gupax_p2pool_api, sources);
+                        payout_sync::start(&mut api, gupax_p2pool_api, node.as_ref());
                     }
                     if api.syncing {
                         ui.spinner();

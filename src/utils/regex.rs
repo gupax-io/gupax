@@ -159,7 +159,7 @@ pub fn nb_current_shares(s: &str) -> Option<u32> {
 // get the number of current shares
 pub fn p2pool_monero_node(s: &str) -> Option<Node> {
     static CURRENT_NODE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?P<ip>\S+):RPC (?P<rpc>\d+):ZMQ (?P<zmq>\d+)").unwrap());
+        Lazy::new(|| Regex::new(r"(?P<ip>\S+):RPC(-SSL)? (?P<rpc>\d+):ZMQ (?P<zmq>\d+)").unwrap());
     if let Some(c) = CURRENT_NODE.captures(s)
         && let Some(m_ip) = c.name("ip")
         && let Some(m_rpc) = c.name("rpc")
@@ -174,6 +174,12 @@ pub fn p2pool_monero_node(s: &str) -> Option<Node> {
         });
     }
     None
+}
+// Height of the block found by the pool that paid the user nothing
+pub fn p2pool_no_payout_height(s: &str) -> Option<u64> {
+    static NO_PAYOUT: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"didn't get a payout in block (?P<height>\d+)").unwrap());
+    NO_PAYOUT.captures(s)?.name("height")?.as_str().parse().ok()
 }
 pub fn detect_pool_xmrig(s: &str, proxy_port: u16, p2pool_port: u16) -> Option<Pool> {
     static CURRENT_SHARE: Lazy<Regex> =
@@ -359,6 +365,28 @@ mod test {
         assert_eq!(r.block.find(text).unwrap().as_str(), "block 1111111");
         assert_eq!(r.block_int.find(text).unwrap().as_str(), "1111111");
         assert_eq!(r.block_comma.find(text2).unwrap().as_str(), "1,111,111");
+    }
+
+    #[test]
+    fn block_without_payout() {
+        let text = "NOTICE  2026-10-04 10:00:00.0000 P2Pool Your wallet 4AAA didn't get a payout in block 3654401 because you had no shares in PPLNS window";
+        assert_eq!(p2pool_no_payout_height(text), Some(3654401));
+        let text = "NOTICE  2026-10-04 10:00:00.0000 P2Pool Your wallet 4AAA got a payout of 0.000274561854 XMR in block 3654401";
+        assert_eq!(p2pool_no_payout_height(text), None);
+    }
+
+    #[test]
+    fn node_of_p2pool() {
+        let node = |ip: &str| Node {
+            ip: ip.to_string(),
+            rpc: "18081".to_string(),
+            zmq: "18083".to_string(),
+        };
+        let text = "Monero node               = 127.0.0.1:RPC 18081:ZMQ 18083";
+        assert_eq!(p2pool_monero_node(text), Some(node("127.0.0.1")));
+        // Node reached with --rpc-ssl.
+        let text = "Monero node               = xyz.onion:RPC-SSL 18081:ZMQ 18083";
+        assert_eq!(p2pool_monero_node(text), Some(node("xyz.onion")));
     }
 
     #[test]

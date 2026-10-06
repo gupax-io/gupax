@@ -782,6 +782,13 @@ impl App {
         // Set saved prefer local node to runtime
         app.p2pool_api.lock().unwrap().prefer_local_node = app.state.p2pool.prefer_local_node;
 
+        // Set saved observer to runtime
+        app.gupax_p2pool_api
+            .lock()
+            .unwrap()
+            .observer
+            .clone_from(&app.state.p2pool.observer);
+
         // Set saved choice for notifications
         app.notifications_api.lock().unwrap().notifications = app.state.gupax.notifications.clone();
 

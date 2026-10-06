@@ -48,7 +48,7 @@ egui_commonmark = {version="0.25.0", features=["better_syntax_highlighting"]}
 #--------------------------------------------------------------------------------
 env_logger = "0.11.9"
 figment = { version = "0.10.19", features = ["toml"] }
-reqwest = {version = "0.13.2", default-features=false, features=["json", "default-tls"]}
+reqwest = {version = "0.13.2", default-features=false, features=["json", "default-tls", "socks"]}
 reqwest-middleware = "0.5"
 reqwest-retry = "0.9"
 image = { version = "0.25.10", features = ["png"] }
@@ -101,6 +101,8 @@ tokio-stream = {version = "0.1", default-features=false}
 thiserror = "2.0"
 monero = "0.22.0"
 hex = "0.4.3"
+## digest authentication of the Monero node RPC
+http-auth = {version = "0.1.10", default-features = false, features = ["digest-scheme", "http10"]}
 
 # System tray
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
