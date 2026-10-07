@@ -527,6 +527,7 @@ impl Update {
                         ext,
                     ]
                     .concat()
+                    .replace("arm64", "armv8")
                 } else {
                     [
                         "https://",
@@ -542,6 +543,7 @@ impl Update {
                         ext,
                     ]
                     .concat()
+                    .replace("arm64", "armv8")
                 }
             }
             _ => panic!("unknown name"),
