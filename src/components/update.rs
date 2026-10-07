@@ -532,7 +532,9 @@ impl Update {
                     [
                         "https://",
                         source,
-                        "releases/download/",
+                        "/releases/download/",
+                        version,
+                        "/",
                         "monero-",
                         os_target,
                         "-",
