@@ -16,6 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::app::panels::middle::common::list_poolnode::PoolNode;
+use crate::utils::i18n::t_f;
 use crate::utils::node_latency::port_ping;
 use derive_more::{Deref, DerefMut};
 use egui::Color32;
@@ -276,7 +277,7 @@ impl Ping {
         nodes.sort_by_key(|node| node.ms);
         let fastest_info;
         if let Some(node) = nodes.first() {
-            fastest_info = format!("Fastest node: {}ms ... {}", node.ms, node.ip);
+            fastest_info = t_f!("Fastest node: {}ms ... {}", node.ms, node.ip);
         } else {
             fastest_info = "Pinged without any nodes".to_string();
         }

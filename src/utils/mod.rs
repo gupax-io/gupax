@@ -19,6 +19,7 @@ pub mod constants;
 pub mod errors;
 pub mod ferris;
 pub mod human;
+pub mod i18n;
 pub mod macros;
 pub mod node_latency;
 pub mod panic;

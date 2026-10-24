@@ -16,6 +16,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::helper::xvb::algorithm::{ManualDonationLevel, XvbModeChoice};
+use crate::utils::i18n::t;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -33,19 +34,20 @@ use crate::helper::xvb::PubXvbApi;
 use crate::helper::xvb::algorithm::{ManualDonationMetric, XvbMode};
 use crate::miscs::height_txt_before_button;
 use crate::utils::constants::{
-    ORANGE, XVB_DONATED_1H_FIELD, XVB_DONATED_24H_FIELD, XVB_DONATION_LEVEL_DONOR_HELP,
-    XVB_DONATION_LEVEL_MEGA_DONOR_HELP, XVB_DONATION_LEVEL_VIP_DONOR_HELP,
-    XVB_DONATION_LEVEL_WHALE_DONOR_HELP, XVB_FAILURE_FIELD, XVB_HERO_SELECT, XVB_MANUAL_POOL,
-    XVB_MANUAL_SLIDER_MANUAL_P2POOL_HELP, XVB_MANUAL_SLIDER_MANUAL_XVB_HELP,
-    XVB_MODE_MANUAL_DONATION_LEVEL_HELP, XVB_MODE_MANUAL_P2POOL_HELP, XVB_MODE_MANUAL_XVB_HELP,
-    XVB_ROUND_TYPE_FIELD, XVB_TIMEFRAME, XVB_URL_RULES, XVB_WINNER_FIELD,
+    ORANGE, XVB_URL_RULES, xvb_donated_1h_field, xvb_donated_24h_field,
+    xvb_donation_level_donor_help, xvb_donation_level_mega_donor_help,
+    xvb_donation_level_vip_donor_help, xvb_donation_level_whale_donor_help, xvb_failure_field,
+    xvb_hero_select, xvb_manual_pool, xvb_manual_slider_manual_p2pool_help,
+    xvb_manual_slider_manual_xvb_help, xvb_mode_manual_donation_level_help,
+    xvb_mode_manual_p2pool_help, xvb_mode_manual_xvb_help, xvb_round_type_field, xvb_timeframe,
+    xvb_winner_field,
 };
 use crate::utils::regex::Regexes;
-use crate::{XVB_MINING_ON_FIELD, XVB_P2POOL_BUFFER, XVB_SIDECHAIN};
 use crate::{
     constants::{BYTES_XVB, SPACE},
     utils::constants::XVB_URL,
 };
+use crate::{xvb_mining_on_field, xvb_p2pool_buffer, xvb_sidechain};
 
 impl crate::disk::state::Xvb {
     #[inline(always)] // called once
@@ -65,9 +67,9 @@ impl crate::disk::state::Xvb {
             &[
                 ("XMRvsBEAST", XVB_URL, ""),
                 (
-                    "Rules",
+                    t!("Rules"),
                     XVB_URL_RULES,
-                    "Click here to read the rules and understand how the raffle works.",
+                    t!("Click here to read the rules and understand how the raffle works."),
                 ),
                 ("FAQ", "https://xmrvsbeast.com/p2pool/faq.html", ""),
             ],
@@ -88,7 +90,7 @@ impl crate::disk::state::Xvb {
         // --------------------------- XVB Simple -------------------------------------------
         if self.simple {
             ui.add_space(SPACE);
-            if ui.checkbox(&mut self.simple_hero_mode, "Hero Mode").on_hover_text(XVB_HERO_SELECT).clicked() {
+            if ui.checkbox(&mut self.simple_hero_mode, t!("Hero Mode")).on_hover_text(xvb_hero_select()).clicked() {
                 api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
             }
         }
@@ -113,28 +115,28 @@ impl crate::disk::state::Xvb {
                 api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                                  }
                                 if ui.selectable_value(&mut self.mode, XvbModeChoice::Hero,
-                                     XvbModeChoice::Hero.to_string()).on_hover_text(XVB_HERO_SELECT).clicked() {
+                                     XvbModeChoice::Hero.to_string()).on_hover_text(xvb_hero_select()).clicked() {
                 api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                                  }
                                 if ui.selectable_value(&mut self.mode, XvbModeChoice::ManualXvb,
                                      XvbModeChoice::ManualXvb.to_string())
-                                .on_hover_text(XVB_MODE_MANUAL_XVB_HELP).clicked() {
+                                .on_hover_text(xvb_mode_manual_xvb_help()).clicked() {
                 api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                             }
                                 if ui.selectable_value(&mut self.mode, XvbModeChoice::ManualP2pool,
                                      XvbModeChoice::ManualP2pool.to_string())
-                                .on_hover_text(XVB_MODE_MANUAL_P2POOL_HELP).clicked() {
+                                .on_hover_text(xvb_mode_manual_p2pool_help()).clicked() {
                 api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                             }
                                 if ui.selectable_value(&mut self.mode, XvbModeChoice::ManualDonationLevel,
                                      XvbModeChoice::ManualDonationLevel.to_string())
-                                .on_hover_text(XVB_MODE_MANUAL_DONATION_LEVEL_HELP).clicked() {
+                                .on_hover_text(xvb_mode_manual_donation_level_help()).clicked() {
                 api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                             }
                         });
                         if self.mode == XvbModeChoice::ManualXvb {
                             ui.add_space(SPACE);
-                            let slider_help_text = XVB_MANUAL_SLIDER_MANUAL_XVB_HELP;
+                            let slider_help_text = xvb_manual_slider_manual_xvb_help();
                             ui.horizontal(|ui| {
                                 if ui.add_sized([0.0, text_height],egui::Button::selectable(self.manual_xvb_donation_metric == ManualDonationMetric::Hash, "Hash")).clicked() {
                                     self.manual_xvb_donation_metric = ManualDonationMetric::Hash;
@@ -163,7 +165,7 @@ impl crate::disk::state::Xvb {
                         }
                         if self.mode == XvbModeChoice::ManualP2pool {
                             ui.add_space(SPACE);
-                            let slider_help_text = XVB_MANUAL_SLIDER_MANUAL_P2POOL_HELP;
+                            let slider_help_text = xvb_manual_slider_manual_p2pool_help();
                             ui.horizontal(|ui| {
 
                                 if ui.add_sized([0.0, text_height],egui::Button::selectable(self.manual_p2pool_donation_metric == ManualDonationMetric::Hash, "Hash")).clicked() {
@@ -195,23 +197,23 @@ impl crate::disk::state::Xvb {
                             ui.horizontal(|ui| {
                             if ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::Donor,
                                 ManualDonationLevel::Donor.to_string())
-                            .on_hover_text(XVB_DONATION_LEVEL_DONOR_HELP).clicked() {
+                            .on_hover_text(xvb_donation_level_donor_help()).clicked() {
                 api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                         }
                             if ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::DonorVIP,
                                 ManualDonationLevel::DonorVIP.to_string())
-                            .on_hover_text(XVB_DONATION_LEVEL_VIP_DONOR_HELP)
+                            .on_hover_text(xvb_donation_level_vip_donor_help())
                                 .clicked() {
                 api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                                 }
                             if ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::DonorWhale,
                                 ManualDonationLevel::DonorWhale.to_string())
-                            .on_hover_text(XVB_DONATION_LEVEL_WHALE_DONOR_HELP).clicked() {
+                            .on_hover_text(xvb_donation_level_whale_donor_help()).clicked() {
                 api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                         }
                             if ui.radio_value(&mut self.manual_donation_level, ManualDonationLevel::DonorMega,
                                 ManualDonationLevel::DonorMega.to_string())
-                            .on_hover_text(XVB_DONATION_LEVEL_MEGA_DONOR_HELP).clicked() {
+                            .on_hover_text(xvb_donation_level_mega_donor_help()).clicked() {
                 api.lock().unwrap().runtime_mode = XvbMode::from(&*self);
                         }
 
@@ -234,17 +236,17 @@ impl crate::disk::state::Xvb {
                 [0.0 , text_height],
                 egui::Slider::new(&mut self.algo_config.p2pool_buffer, -100..=100)
                 .text("% P2Pool Buffer" )
-            ).on_hover_text(XVB_P2POOL_BUFFER).changed() {
+            ).on_hover_text(xvb_p2pool_buffer()).changed() {
                 api.lock().unwrap().algo_config.p2pool_buffer = self.algo_config.p2pool_buffer;
             }
 
-            }).response.on_disabled_hover_text(XVB_P2POOL_BUFFER);
+            }).response.on_disabled_hover_text(xvb_p2pool_buffer());
 
          ui.add_space(SPACE);
          // p2pool sidechain HR or stratum data
             if ui.add_sized(
                 [0.0, text_height],
-                egui::Checkbox::new(&mut self.algo_config.p2pool_watch_sidechain, "Watch P2Pool Sidechain HR")).on_hover_text(XVB_SIDECHAIN).clicked() {
+                egui::Checkbox::new(&mut self.algo_config.p2pool_watch_sidechain, t!("Watch P2Pool Sidechain HR"))).on_hover_text(xvb_sidechain()).clicked() {
                 api.lock().unwrap().algo_config.p2pool_watch_sidechain = self.algo_config.p2pool_watch_sidechain;
             }
          });
@@ -254,8 +256,8 @@ impl crate::disk::state::Xvb {
             if ui.add_sized(
                 [0.0 , text_height],
                 egui::Slider::new(&mut self.manual_timeframe_minutes, 1..=30).suffix("mn")
-                .text("Decision timeframe")
-            ).on_hover_text(XVB_TIMEFRAME).changed() {
+                .text(t!("Decision timeframe"))
+            ).on_hover_text(xvb_timeframe()).changed() {
                 self.algo_config.timeframe = Duration::from_mins(self.manual_timeframe_minutes.into());
                 api.lock().unwrap().algo_config.timeframe= self.algo_config.timeframe;
                 api.lock().unwrap().update_samples_timeframe();
@@ -264,7 +266,7 @@ impl crate::disk::state::Xvb {
             });
         // Allow user to choose XvB pool manually
         // checkbox to enable
-        ui.checkbox(&mut self.manual_pool_enabled, "Manual selection of the XvB pool").on_hover_text(XVB_MANUAL_POOL);
+        ui.checkbox(&mut self.manual_pool_enabled, t!("Manual selection of the XvB pool")).on_hover_text(xvb_manual_pool());
         // slider for EU or NA
             ui.horizontal(|ui|{
         ui.add_enabled_ui(self.manual_pool_enabled, |ui|{
@@ -281,7 +283,7 @@ impl crate::disk::state::Xvb {
         if !Regexes::addr_ok(address) {
             debug!("XvB Tab | Rendering warning text");
                 ui.horizontal_wrapped(|ui|{
-            ui.label(RichText::new("You don't have any payout address set in the P2pool Tab ! XvB process needs one to function properly.")
+            ui.label(RichText::new(t!("You don't have any payout address set in the P2pool Tab ! XvB process needs one to function properly."))
                     .color(ORANGE));
                 });
         }
@@ -298,15 +300,15 @@ impl crate::disk::state::Xvb {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             ui.horizontal(|ui| {
                     // Failures
-                    stat_box(ui, XVB_FAILURE_FIELD, &priv_stats.fails.to_string(), height_column);
-                    stat_box(ui, XVB_DONATED_1H_FIELD,
+                    stat_box(ui, xvb_failure_field(), &priv_stats.fails.to_string(), height_column);
+                    stat_box(ui, xvb_donated_1h_field(),
                                         &[
                                             Float::from_3((priv_stats.donor_1hr_avg / 1000.0) as f64).to_string(),
                                             " kH/s".to_string(),
                                         ]
                                         .concat()
                         ,  height_column);
-                    stat_box(ui, XVB_DONATED_24H_FIELD,
+                    stat_box(ui, xvb_donated_24h_field(),
                                         &[
                                             Float::from_3((priv_stats.donor_24hr_avg / 1000.0) as f64).to_string(),
                                             " kH/s".to_string(),
@@ -316,18 +318,18 @@ impl crate::disk::state::Xvb {
                             ui.add_enabled_ui(priv_stats.round_participate.is_some(), |ui| {
                                  let round = match &priv_stats.round_participate {
                         Some(r) => r.to_string(),
-                        None => "None".to_string(),
+                        None => t!("None").to_string(),
                     };
-                    stat_box(ui, XVB_ROUND_TYPE_FIELD, &round, height_column);
+                    stat_box(ui, xvb_round_type_field(), &round, height_column);
                     }).response
                                 .on_disabled_hover_text(
-                                    "You do not yet have a share in the PPLNS Window.",
+                                    t!("You do not yet have a share in the PPLNS Window."),
                                 );
-                    stat_box(ui, XVB_WINNER_FIELD,
+                    stat_box(ui, xvb_winner_field(),
 if priv_stats.win_current {
-                                        "You are Winning the round !"
+                                        t!("You are Winning the round !")
                                     } else {
-                                        "You are not the winner"
+                                        t!("You are not the winner")
                                     }
                         , height_column);
                 });
@@ -338,12 +340,12 @@ if priv_stats.win_current {
                             ui.vertical_centered(|ui| {
                                 ui.spacing_mut().item_spacing = [style_height / 2.0, style_height / 2.0].into();
                                 ui.add_space(SPACE);
-                                    ui.label(XVB_MINING_ON_FIELD)
+                                    ui.label(xvb_mining_on_field())
                                         .on_hover_text_at_pointer(&priv_stats.msg_indicator);
                                     ui.label(
                                         current_node
                                             .as_ref()
-                                            .map_or("No where".to_string(), |n| n.to_string()),
+                                            .map_or(t!("No where").to_string(), |n| n.to_string()),
                                     )
                                     .on_hover_text_at_pointer(&priv_stats.msg_indicator);
                                     ui.label(Uptime::from(priv_stats.time_switch_pool).to_string())
@@ -352,7 +354,7 @@ if priv_stats.win_current {
                             });
                     })
                         .response
-                        .on_disabled_hover_text("Algorithm is not running.");
+                        .on_disabled_hover_text(t!("Algorithm is not running."));
                 // indicators
                     })
                 });

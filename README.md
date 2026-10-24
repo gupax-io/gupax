@@ -8,6 +8,17 @@
 This repository has a stable release. 
 It is intended for end users and offers a friendly and easy user experience, while allowing advanced users to use it for more complex setup.
 
+## Multi-language support (added in this version)
+
+This version adds an i18n framework to Gupax:
+
+- every user-visible string goes through `t!` / `t_f!` lookups with an
+  automatic English fallback
+- new languages are added by dropping in a translation table, with no UI code
+  changes (see [I18N.md](./I18N.md))
+- this build bundles no translation tables or extra fonts, so the UI stays
+  English until a language is added
+
 ## Gupax
 
 `Gupax` is a GUI for mining [**Monero**](https://github.com/monero-project/monero) on a decentralized pool using [**P2Pool**](https://github.com/SChernykh/p2pool) and [**XMRig**](https://github.com/xmrig/xmrig). It also brings multiple features like running your own monero node, connecting your miners to a proxy  and optionally participating (but you will want to 😉) in the [XMRvsBeast raffle](https://xmrvsbeast.com). 

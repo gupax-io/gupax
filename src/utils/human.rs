@@ -53,7 +53,13 @@ impl HumanTime {
         HumanTime(Duration::from_secs(u))
     }
 
-    fn plural(started: &mut bool, name: &str, value: u64, separator: &str) -> String {
+    fn plural(
+        started: &mut bool,
+        singular: &'static str,
+        plural_name: &'static str,
+        value: u64,
+        separator: &str,
+    ) -> String {
         // do not show time if value is 0 unless it is for seconds.
         let mut string = String::new();
         if value > 0 {
@@ -62,10 +68,11 @@ impl HumanTime {
             }
             string.push_str(&value.to_string());
             string.push(' ');
-            string.push_str(name);
-            if value > 1 {
-                string.push('s');
-            }
+            string.push_str(crate::utils::i18n::tr(if value > 1 {
+                plural_name
+            } else {
+                singular
+            }));
             *started = true;
         }
         string
@@ -73,7 +80,7 @@ impl HumanTime {
     pub fn display(&self, wrap: bool) -> String {
         let secs = self.0.as_secs();
         if secs == 0 {
-            return String::from("0 second");
+            return format!("0 {}", crate::utils::i18n::tr("second"));
         }
         let separator = if wrap { "\n" } else { ", " };
         let years = secs / 31_557_600; // 365.25d
@@ -87,12 +94,42 @@ impl HumanTime {
         let seconds = day_secs % 60;
         let mut started = false;
         let mut string = String::new();
-        string.push_str(&Self::plural(&mut started, "year", years, separator));
-        string.push_str(&Self::plural(&mut started, "month", months, separator));
-        string.push_str(&Self::plural(&mut started, "day", days, separator));
-        string.push_str(&Self::plural(&mut started, "hour", hours, separator));
-        string.push_str(&Self::plural(&mut started, "minute", minutes, separator));
-        string.push_str(&Self::plural(&mut started, "second", seconds, separator));
+        string.push_str(&Self::plural(
+            &mut started,
+            "year",
+            "years",
+            years,
+            separator,
+        ));
+        string.push_str(&Self::plural(
+            &mut started,
+            "month",
+            "months",
+            months,
+            separator,
+        ));
+        string.push_str(&Self::plural(&mut started, "day", "days", days, separator));
+        string.push_str(&Self::plural(
+            &mut started,
+            "hour",
+            "hours",
+            hours,
+            separator,
+        ));
+        string.push_str(&Self::plural(
+            &mut started,
+            "minute",
+            "minutes",
+            minutes,
+            separator,
+        ));
+        string.push_str(&Self::plural(
+            &mut started,
+            "second",
+            "seconds",
+            seconds,
+            separator,
+        ));
         string
     }
 }

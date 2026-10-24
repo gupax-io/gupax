@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::utils::i18n::{t, t_f};
 use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 
@@ -26,7 +27,7 @@ use crate::disk::state::Gupax;
 use crate::miscs::height_txt_before_button;
 use crate::regex::Regexes;
 use crate::{
-    GREEN, GUPAX_SELECT, LIGHT_GRAY, NODE_DB_DIR, NODE_DB_PATH_EMPTY, NODE_PATH_OK, RED, SPACE,
+    GREEN, LIGHT_GRAY, RED, SPACE, gupax_select, node_db_dir, node_db_path_empty, node_path_ok,
 };
 
 pub fn slider_state_field(
@@ -157,20 +158,24 @@ impl<'a> StateTextEdit<'a> {
 pub fn path_db_field(ui: &mut Ui, path: &mut String, file_window: &Arc<Mutex<FileWindow>>) {
     ui.horizontal(|ui| {
         let (symbol, color, hover) = if path.is_empty() {
-            ("➖", LIGHT_GRAY, NODE_DB_PATH_EMPTY)
+            ("➖", LIGHT_GRAY, node_db_path_empty())
         } else if !Gupax::path_is_dir(path) {
-            ("❌", RED, NODE_DB_DIR)
+            ("❌", RED, node_db_dir())
         } else {
-            ("✔", GREEN, NODE_PATH_OK)
+            ("✔", GREEN, node_path_ok())
         };
-        let text = ["Node Database Directory ", symbol].concat();
+        let text = [t!("Node Database Directory "), symbol].concat();
         ui.add_sized(
             [0.0, height_txt_before_button(ui, &TextStyle::Body)],
             Label::new(RichText::new(text).color(color)),
         );
         let window_busy = file_window.lock().unwrap().thread;
         ui.add_enabled_ui(!window_busy, |ui| {
-            if ui.button("Open").on_hover_text(GUPAX_SELECT).clicked() {
+            if ui
+                .button(t!("Open"))
+                .on_hover_text(gupax_select())
+                .clicked()
+            {
                 Gupax::spawn_file_window_thread(file_window, FileType::NodeDB);
             }
             ui.spacing_mut().text_edit_width = ui.available_width();
@@ -182,15 +187,15 @@ pub fn monero_address_field(address: &mut String, ui: &mut Ui, hover: &str) {
     ui.group(|ui| {
         let len = format!("{:02}", address.len());
         let (text, color) = if address.is_empty() {
-            (format!("Monero Address [{len}/95] ➖"), Color32::LIGHT_GRAY)
+            (t_f!("Monero Address [{}/95] ➖", len), Color32::LIGHT_GRAY)
         } else if Regexes::addr_ok(address) {
             (
-                format!("Monero Address [{len}/95] ✔"),
+                t_f!("Monero Address [{}/95] ✔", len),
                 Color32::from_rgb(100, 230, 100),
             )
         } else {
             (
-                format!("Monero Address [{len}/95] ❌"),
+                t_f!("Monero Address [{}/95] ❌", len),
                 Color32::from_rgb(230, 50, 50),
             )
         };

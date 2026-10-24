@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::utils::i18n::{t, t_f};
 use std::sync::{Arc, Mutex};
 
 use crate::{app::Benchmark, disk::state::Status, helper::xrig::xmrig::PubXmrigApi};
@@ -44,28 +45,36 @@ impl Status {
             ui.group(|ui| {
                 ui.set_max_width(ui.available_width() / 2.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("Your CPU").underline().color(BONE))
-                        .on_hover_text(STATUS_SUBMENU_YOUR_CPU);
+                    ui.label(RichText::new(t!("Your CPU")).underline().color(BONE))
+                        .on_hover_text(status_submenu_your_cpu());
                     ui.label(cpu.cpu.as_str());
-                    ui.label(RichText::new("Total Benchmarks").underline().color(BONE))
-                        .on_hover_text(STATUS_SUBMENU_YOUR_BENCHMARKS);
+                    ui.label(
+                        RichText::new(t!("Total Benchmarks"))
+                            .underline()
+                            .color(BONE),
+                    )
+                    .on_hover_text(status_submenu_your_benchmarks());
                     ui.label(format!("{}", cpu.benchmarks));
                     // ui.add_sized([width, text], Label::new(format!("{}", cpu.benchmarks)));
-                    ui.label(RichText::new("Rank").underline().color(BONE))
-                        .on_hover_text(STATUS_SUBMENU_YOUR_RANK);
+                    ui.label(RichText::new(t!("Rank")).underline().color(BONE))
+                        .on_hover_text(status_submenu_your_rank());
                     ui.label(format!("{}/{}", cpu.rank, benchmarks.len()));
                 })
             });
             ui.group(|ui| {
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("High Hashrate").underline().color(BONE))
-                        .on_hover_text(STATUS_SUBMENU_YOUR_HIGH);
+                    ui.label(RichText::new(t!("High Hashrate")).underline().color(BONE))
+                        .on_hover_text(status_submenu_your_high());
                     ui.label(format!("{} H/s", Float::from_0(cpu.high.into())));
-                    ui.label(RichText::new("Average Hashrate").underline().color(BONE))
-                        .on_hover_text(STATUS_SUBMENU_YOUR_AVERAGE);
+                    ui.label(
+                        RichText::new(t!("Average Hashrate"))
+                            .underline()
+                            .color(BONE),
+                    )
+                    .on_hover_text(status_submenu_your_average());
                     ui.label(format!("{} H/s", Float::from_0(cpu.average.into())));
-                    ui.label(RichText::new("Low Hashrate").underline().color(BONE))
-                        .on_hover_text(STATUS_SUBMENU_YOUR_LOW);
+                    ui.label(RichText::new(t!("Low Hashrate")).underline().color(BONE))
+                        .on_hover_text(status_submenu_your_low());
                     ui.label(RichText::new(format!(
                         "{} H/s",
                         Float::from_0(cpu.low.into())
@@ -85,22 +94,23 @@ impl Status {
                 if percent > 100.0 {
                     ui.add_sized(
                         [width, double],
-                        Label::new(format!(
+                        Label::new(t_f!(
                         "Your CPU's is faster than the highest benchmark! It is [{}] faster @ {}!",
                         human, api.hashrate
                     )),
                     );
                     ui.add(ProgressBar::new(1.0));
                 } else if api.hashrate_raw == 0.0 {
-                    ui.label("Measuring hashrate...");
+                    ui.label(t!("Measuring hashrate..."));
                     ui.spinner();
                     ui.add(ProgressBar::new(0.0));
                 } else {
                     ui.add_sized(
                         [width, double],
-                        Label::new(format!(
+                        Label::new(t_f!(
                             "Your CPU's hashrate is [{}] of the highest benchmark @ {}",
-                            human, api.hashrate
+                            human,
+                            api.hashrate
                         )),
                     );
                     ui.add(ProgressBar::new(percent / 100.0));
@@ -109,7 +119,7 @@ impl Status {
                 ui.add_enabled_ui(xmrig_alive, |ui| {
                     ui.add_sized(
                         [width, double],
-                        Label::new("XMRig is offline. Hashrate cannot be determined."),
+                        Label::new(t!("XMRig is offline. Hashrate cannot be determined.")),
                     );
                     ui.add(ProgressBar::new(0.0));
                 });
@@ -117,8 +127,8 @@ impl Status {
             ui.add_space(SPACE);
             // Comparison
             ui.group(|ui| {
-                ui.hyperlink_to("Other CPUs", "https://xmrig.com/benchmark")
-                    .on_hover_text(STATUS_SUBMENU_OTHER_CPUS);
+                ui.hyperlink_to(t!("Other CPUs"), "https://xmrig.com/benchmark")
+                    .on_hover_text(status_submenu_other_cpus());
             });
         });
 
@@ -140,31 +150,31 @@ impl Status {
                 .header(double, |mut header| {
                     header.col(|ui| {
                         ui.add_sized([bar, text], Label::new("CPU"))
-                            .on_hover_text(STATUS_SUBMENU_OTHER_CPU);
+                            .on_hover_text(status_submenu_other_cpu());
                     });
                     header.col(|ui| {
-                        ui.add_sized([bar, text], Label::new("Relative"))
-                            .on_hover_text(STATUS_SUBMENU_OTHER_RELATIVE);
+                        ui.add_sized([bar, text], Label::new(t!("Relative")))
+                            .on_hover_text(status_submenu_other_relative());
                     });
                     header.col(|ui| {
-                        ui.add_sized([high, text], Label::new("High"))
-                            .on_hover_text(STATUS_SUBMENU_OTHER_HIGH);
+                        ui.add_sized([high, text], Label::new(t!("High")))
+                            .on_hover_text(status_submenu_other_high());
                     });
                     header.col(|ui| {
-                        ui.add_sized([average, text], Label::new("Average"))
-                            .on_hover_text(STATUS_SUBMENU_OTHER_AVERAGE);
+                        ui.add_sized([average, text], Label::new(t!("Average")))
+                            .on_hover_text(status_submenu_other_average());
                     });
                     header.col(|ui| {
                         ui.add_sized([low, text], Label::new("Low"))
-                            .on_hover_text(STATUS_SUBMENU_OTHER_LOW);
+                            .on_hover_text(status_submenu_other_low());
                     });
                     header.col(|ui| {
-                        ui.add_sized([rank, text], Label::new("Rank"))
-                            .on_hover_text(STATUS_SUBMENU_OTHER_RANK);
+                        ui.add_sized([rank, text], Label::new(t!("Rank")))
+                            .on_hover_text(status_submenu_other_rank());
                     });
                     header.col(|ui| {
-                        ui.add_sized([bench, text], Label::new("Benchmarks"))
-                            .on_hover_text(STATUS_SUBMENU_OTHER_BENCHMARKS);
+                        ui.add_sized([bench, text], Label::new(t!("Benchmarks")))
+                            .on_hover_text(status_submenu_other_benchmarks());
                     });
                 })
                 .body(|body| {

@@ -21,6 +21,7 @@ use crate::helper::xvb::priv_stats::XvbPrivStats;
 use crate::helper::xvb::public_stats::XvbPubStats;
 use crate::helper::{ProcessName, sleep_end_loop};
 use crate::miscs::{client, output_console};
+use crate::utils::i18n::t_f;
 use bounded_vec_deque::BoundedVecDeque;
 use enclose::enc;
 use log::{debug, info, warn};
@@ -35,7 +36,7 @@ use tokio::spawn;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep};
 
-use crate::utils::constants::{XVB_PUBLIC_ONLY, XVB_TIME_ALGO};
+use crate::utils::constants::{XVB_TIME_ALGO, xvb_public_only};
 use crate::{
     helper::{ProcessSignal, ProcessState},
     utils::macros::sleep,
@@ -595,7 +596,7 @@ async fn check_conditions_for_start(
         info!("XvB | print to console state");
         output_console(
             &mut gui_api.lock().unwrap().output,
-            &["XvB partially started.\n", XVB_PUBLIC_ONLY].concat(),
+            &["XvB partially started.\n", xvb_public_only()].concat(),
             ProcessName::Xvb,
         );
     }
@@ -683,7 +684,7 @@ async fn check_state_outcauses_xvb(
                                     ));
                                                 output_console(
                                                     &mut gui_api.lock().unwrap().output,
-                                                    &format!("XvB process can not completely continue, falling back to {pool}"),
+                                                    &t_f!("XvB process can not completely continue, falling back to {}", pool),
                                                     ProcessName::Xvb
                                                 );
                                             }
@@ -724,7 +725,7 @@ async fn check_state_outcauses_xvb(
             );
             output_console(
                 &mut gui_api.lock().unwrap().output,
-                XVB_PUBLIC_ONLY,
+                xvb_public_only(),
                 ProcessName::Xvb,
             );
             process.lock().unwrap().state = ProcessState::Syncing;

@@ -11,6 +11,7 @@ use crate::helper::xvb::algorithm::XvbMode;
 use crate::helper::{Helper, ProcessName, ProcessState};
 use crate::utils::constants::*;
 use crate::utils::errors::{ErrorButtons, ErrorFerris};
+use crate::utils::i18n::{self, Language, t, t_f};
 use crate::utils::macros::sleep;
 use crate::utils::regex::Regexes;
 use egui::*;
@@ -67,6 +68,10 @@ impl crate::app::App {
                                 ui.label(self.os);
                                 ui.add(Separator::default().grow(extra_separator));
                                 self.theme_show(ui);
+                                if i18n::has_language_choice() {
+                                    ui.add(Separator::default().grow(extra_separator));
+                                    self.language_show(ui);
+                                }
                                 // width of each status
                                 let width_status = if !tiny_width {
                                     ((ui.available_width()
@@ -128,7 +133,7 @@ impl crate::app::App {
                 [0.0, height],
                 Label::new(RichText::new(&self.name_version).color(YELLOW)),
             )
-            .on_hover_text(GUPAX_SHOULD_RESTART);
+            .on_hover_text(gupax_should_restart());
         } else {
             ui.add_sized([0.0, height], Label::new(&self.name_version));
         }
@@ -156,57 +161,76 @@ impl crate::app::App {
 
         self.set_theme(ctx);
     }
+    fn language_show(&mut self, ui: &mut Ui) {
+        let current = i18n::language();
+        let response = ui.menu_button(current.native_name(), |ui| {
+            for language in Language::iter() {
+                if ui
+                    .selectable_label(language == current, language.native_name())
+                    .clicked()
+                {
+                    self.state.gupax.language = language;
+                    i18n::set_language(language);
+                    i18n::install_fonts(ui.ctx());
+                    ui.close();
+                }
+            }
+        });
+        response
+            .response
+            .on_hover_text_at_pointer(language_toggle());
+    }
     fn status_process(process: &ProcessStateGui, ui: &mut Ui, width: f32) {
         let color;
         let hover_text = match process.state {
             Alive => {
                 color = GREEN;
                 match process.name {
-                    ProcessName::Node => NODE_ALIVE,
-                    ProcessName::P2pool => P2POOL_ALIVE,
-                    ProcessName::Xmrig => XMRIG_ALIVE,
-                    ProcessName::XmrigProxy => XMRIG_PROXY_ALIVE,
-                    ProcessName::Xvb => XVB_ALIVE,
+                    ProcessName::Node => node_alive(),
+                    ProcessName::P2pool => p2pool_alive(),
+                    ProcessName::Xmrig => xmrig_alive(),
+                    ProcessName::XmrigProxy => xmrig_proxy_alive(),
+                    ProcessName::Xvb => xvb_alive(),
                 }
             }
             Dead => {
                 color = GRAY;
                 match process.name {
-                    ProcessName::Node => NODE_DEAD,
-                    ProcessName::P2pool => P2POOL_DEAD,
-                    ProcessName::Xmrig => XMRIG_DEAD,
-                    ProcessName::XmrigProxy => XMRIG_PROXY_DEAD,
-                    ProcessName::Xvb => XVB_DEAD,
+                    ProcessName::Node => node_dead(),
+                    ProcessName::P2pool => p2pool_dead(),
+                    ProcessName::Xmrig => xmrig_dead(),
+                    ProcessName::XmrigProxy => xmrig_proxy_dead(),
+                    ProcessName::Xvb => xvb_dead(),
                 }
             }
             Failed => {
                 color = RED;
                 match process.name {
-                    ProcessName::Node => NODE_FAILED,
-                    ProcessName::P2pool => P2POOL_FAILED,
-                    ProcessName::Xmrig => XMRIG_FAILED,
-                    ProcessName::XmrigProxy => XMRIG_PROXY_FAILED,
-                    ProcessName::Xvb => XVB_FAILED,
+                    ProcessName::Node => node_failed(),
+                    ProcessName::P2pool => p2pool_failed(),
+                    ProcessName::Xmrig => xmrig_failed(),
+                    ProcessName::XmrigProxy => xmrig_proxy_failed(),
+                    ProcessName::Xvb => xvb_failed(),
                 }
             }
             Syncing | NotMining | OfflinePoolsAll => {
                 color = ORANGE;
                 match process.name {
-                    ProcessName::Node => NODE_SYNCING,
-                    ProcessName::P2pool => P2POOL_SYNCING,
-                    ProcessName::Xmrig => XMRIG_NOT_MINING,
-                    ProcessName::XmrigProxy => XMRIG_PROXY_NOT_MINING,
-                    ProcessName::Xvb => XVB_PUBLIC_ONLY,
+                    ProcessName::Node => node_syncing(),
+                    ProcessName::P2pool => p2pool_syncing(),
+                    ProcessName::Xmrig => xmrig_not_mining(),
+                    ProcessName::XmrigProxy => xmrig_proxy_not_mining(),
+                    ProcessName::Xvb => xvb_public_only(),
                 }
             }
             Middle | Waiting => {
                 color = YELLOW;
                 match process.name {
-                    ProcessName::Node => NODE_MIDDLE,
-                    ProcessName::P2pool => P2POOL_MIDDLE,
-                    ProcessName::Xmrig => XMRIG_MIDDLE,
-                    ProcessName::XmrigProxy => XMRIG_PROXY_MIDDLE,
-                    ProcessName::Xvb => XVB_MIDDLE,
+                    ProcessName::Node => node_middle(),
+                    ProcessName::P2pool => p2pool_middle(),
+                    ProcessName::Xmrig => xmrig_middle(),
+                    ProcessName::XmrigProxy => xmrig_proxy_middle(),
+                    ProcessName::Xvb => xvb_middle(),
                 }
             }
         };
@@ -232,9 +256,9 @@ impl crate::app::App {
                 ui.available_height(),
             ];
             let name = process.name;
-            let stop_msg = format!("Stop {name}");
-            let start_msg = format!("Start {name}");
-            let restart_msg = format!("Restart {name}");
+            let stop_msg = t_f!("Stop {}", process.name.to_string());
+            let start_msg = t_f!("Start {}", process.name.to_string());
+            let restart_msg = t_f!("Restart {}", process.name.to_string());
             if process.waiting {
                 ui.add_enabled_ui(false, |ui| {
                     ui.add_sized(size, Button::new("▶"))
@@ -334,7 +358,7 @@ impl crate::app::App {
                         if name != ProcessName::Node && name.is_process_running(&mut self.helper.lock().unwrap().sys_info.lock().unwrap())   {
                             error!("Process already running outside: {name}");
                             self.error_state.set(
-                                PROCESS_OUTSIDE,
+                                process_outside(),
                                 ErrorFerris::Error,
                                 ErrorButtons::Okay,
                             );
@@ -366,13 +390,13 @@ impl crate::app::App {
                                         // show window prompt to ask the user if they want to use the Node outside Gupax.
                                         // But the prompt will only come with the next refresh of frames.
                                         warn!("A monero Node is already running outside of Gupax and can be used for p2pool");
-                                        self.error_state.set(NODE_START_DETECT_VALID,ErrorFerris::Cute,ErrorButtons::UseDetectedLocalNode((*rpc_port, *zmq_port)));
+                                        self.error_state.set(node_start_detect_valid(),ErrorFerris::Cute,ErrorButtons::UseDetectedLocalNode((*rpc_port, *zmq_port)));
                                         // the start will start from the prompt
                                     }
                                     CheckLocalOutsideNode::NonValid => {
                                         // show window with error explaining a node is running but can be used
                                         error!("A monero Node is already running outside of Gupax and can not be used for p2pool");
-                                        self.error_state.set(NODE_START_DETECT_NON_VALID,ErrorFerris::Oops,ErrorButtons::Okay);
+                                        self.error_state.set(node_start_detect_non_valid(),ErrorFerris::Oops,ErrorButtons::Okay);
                                     }
                                     CheckLocalOutsideNode::None => {
                                         // No running local outside node, nothing special to do. Start normally.
@@ -386,7 +410,7 @@ impl crate::app::App {
                                     if name.is_process_running(&mut self.helper.lock().unwrap().sys_info.lock().unwrap())  {
                             error!("Process already running outside: {name}");
                             self.error_state.set(
-                                PROCESS_OUTSIDE,
+                                process_outside(),
                                 ErrorFerris::Error,
                                 ErrorButtons::Okay,
                             );
@@ -406,16 +430,16 @@ impl crate::app::App {
                             if self.state.p2pool.local_node && self.node.lock().unwrap().state == ProcessState::Syncing {
                                 warn!("Trying to start {name} with an unsynced Node");
                                 self.error_state.set(
-                                    "P2Pool needs a fully synced Node.\nThe one selected is not. You can continue to start P2Pool but it won't be ready until the Node is synced".to_string(),
+                                    t!("P2Pool needs a fully synced Node.\nThe one selected is not. You can continue to start P2Pool but it won't be ready until the Node is synced").to_string(),
                                     ErrorFerris::Cute,
                                     ErrorButtons::UseNonSyncedNode,
                                 );
                                 return;
                             }
                             else if self.state.p2pool.local_node && self.node.lock().unwrap().state != ProcessState::Alive {
-                                error!(" {name} needs {} to start because the button \"{P2POOL_USE_LOCAL_NODE_BUTTON}\", but it was not ready", ProcessName::Node);
+                                error!(" {name} needs {} to start because the button \"{}\", but it was not ready", ProcessName::Node, p2pool_use_local_node_button());
                                 self.error_state.set(
-                                    format!("P2Pool needs a local Node to be alive and well. Check the Node tab to start one or uncheck the button \"{P2POOL_USE_LOCAL_NODE_BUTTON}\""),
+                                    t_f!("P2Pool needs a local Node to be alive and well. Check the Node tab to start one or uncheck the button \"{}\"", p2pool_use_local_node_button()),
                                     ErrorFerris::Error,
                                     ErrorButtons::Okay,
                                 );
@@ -486,25 +510,25 @@ impl crate::app::App {
         Self::simple_advanced_submenu(
             ui,
             &mut self.state.node.simple,
-            (NODE_SIMPLE, NODE_ADVANCED),
+            (node_simple(), node_advanced()),
         );
     }
     fn xmrig_submenu(&mut self, ui: &mut Ui) {
         Self::simple_advanced_submenu(
             ui,
             &mut self.state.xmrig.simple,
-            (XMRIG_SIMPLE, XMRIG_ADVANCED),
+            (xmrig_simple(), xmrig_advanced()),
         );
     }
     fn xp_submenu(&mut self, ui: &mut Ui) {
         Self::simple_advanced_submenu(
             ui,
             &mut self.state.xmrig_proxy.simple,
-            (XMRIG_PROXY_SIMPLE, XMRIG_PROXY_ADVANCED),
+            (xmrig_proxy_simple(), xmrig_proxy_advanced()),
         );
     }
     fn xvb_submenu(&mut self, ui: &mut Ui) {
-        self.simple_advanced_submenu_xvb(ui, (XVB_SIMPLE, XVB_ADVANCED));
+        self.simple_advanced_submenu_xvb(ui, (xvb_simple(), xvb_advanced()));
     }
     fn status_submenu(state_submenu: &mut SubmenuStatus, ui: &mut Ui) {
         ui.group(|ui| {
@@ -587,7 +611,7 @@ impl crate::app::App {
             if ui
                 .add_sized(
                     [width, ui.available_height()],
-                    Button::selectable(self.state.xvb.simple, "Simple"),
+                    Button::selectable(self.state.xvb.simple, t!("Simple")),
                 )
                 // .selectable_label(*value, "Simple")
                 .on_hover_text(hover_text.0)
@@ -600,7 +624,7 @@ impl crate::app::App {
             if ui
                 .add_sized(
                     [width, ui.available_height()],
-                    Button::selectable(!self.state.xvb.simple, "Advanced"),
+                    Button::selectable(!self.state.xvb.simple, t!("Advanced")),
                 )
                 // .selectable_label(*value, "Advanced")
                 .on_hover_text(hover_text.1)
@@ -618,7 +642,7 @@ impl crate::app::App {
             if ui
                 .add_sized(
                     [width, ui.available_height()],
-                    Button::selectable(*simple, "Simple"),
+                    Button::selectable(*simple, t!("Simple")),
                 )
                 // .selectable_label(*value, "Simple")
                 .on_hover_text(hover_text.0)
@@ -630,7 +654,7 @@ impl crate::app::App {
             if ui
                 .add_sized(
                     [width, ui.available_height()],
-                    Button::selectable(!*simple, "Advanced"),
+                    Button::selectable(!*simple, t!("Advanced")),
                 )
                 // .selectable_label(*value, "Advanced")
                 .on_hover_text(hover_text.1)
@@ -647,8 +671,8 @@ impl crate::app::App {
                 let width = ((ui.available_width() - spacing) / 2.0).max(0.0);
                 if key.is_s() && !wants_input && self.diff
                     || ui
-                        .add_sized([width, ui.available_height()], Button::new("Save"))
-                        .on_hover_text("Save changes")
+                        .add_sized([width, ui.available_height()], Button::new(t!("Save")))
+                        .on_hover_text(t!("Save changes"))
                         .clicked()
                 {
                     match State::save(&mut self.state, &self.state_path) {
@@ -664,7 +688,7 @@ impl crate::app::App {
                         }
                         Err(e) => {
                             self.error_state.set(
-                                format!("State file: {e}"),
+                                t_f!("State file: {}", e),
                                 ErrorFerris::Error,
                                 ErrorButtons::Okay,
                             );
@@ -673,7 +697,7 @@ impl crate::app::App {
                     match Node::save(&self.node_vec, &self.node_path) {
                         Ok(_) => self.og_node_vec.clone_from(&self.node_vec),
                         Err(e) => self.error_state.set(
-                            format!("Node list: {e}"),
+                            t_f!("Node list: {}", e),
                             ErrorFerris::Error,
                             ErrorButtons::Okay,
                         ),
@@ -681,7 +705,7 @@ impl crate::app::App {
                     match Pool::save(&self.pool_vec, &self.pool_path) {
                         Ok(_) => self.og_pool_vec.clone_from(&self.pool_vec),
                         Err(e) => self.error_state.set(
-                            format!("Pool list: {e}"),
+                            t_f!("Pool list: {}", e),
                             ErrorFerris::Error,
                             ErrorButtons::Okay,
                         ),
@@ -690,8 +714,8 @@ impl crate::app::App {
                 ui.add(Separator::default().grow(0.0));
                 if key.is_r() && !wants_input && self.diff
                     || ui
-                        .add_sized([width, ui.available_height()], Button::new("Reset"))
-                        .on_hover_text("Reset changes")
+                        .add_sized([width, ui.available_height()], Button::new(t!("Reset")))
+                        .on_hover_text(t!("Reset changes"))
                         .clicked()
                 {
                     let og = self.og.lock().unwrap().clone();
@@ -704,6 +728,9 @@ impl crate::app::App {
                     self.state.xvb = og.xvb;
                     self.node_vec.clone_from(&self.og_node_vec);
                     self.pool_vec.clone_from(&self.og_pool_vec);
+                    // keep the interface language in sync with the reverted state
+                    crate::utils::i18n::set_language(self.state.gupax.language);
+                    i18n::install_fonts(ui.ctx());
                 }
             })
         });
@@ -717,21 +744,21 @@ impl crate::app::App {
                 if !self.state.node.path_db.is_empty()
                     && !Gupax::path_is_dir(&self.state.node.path_db)
                 {
-                    return Err(format!("Error: {NODE_DB_DIR}"));
+                    return Err(t_f!("Error: {}", node_db_dir()));
                 }
                 &self.state.gupax.node_path
             }
             ProcessName::P2pool => {
                 // check if p2pool address is valid.
                 if !Regexes::addr_ok(&self.state.p2pool.address) {
-                    return Err(format!("Error: {P2POOL_ADDRESS}"));
+                    return Err(t_f!("Error: {}", p2pool_address()));
                 }
                 // check if a remote node is selected if button unchecked and not in advanced mode
                 if !self.state.p2pool.local_node
                     && self.state.p2pool.selected_remote_node.is_none()
                     && self.state.p2pool.submenu != SubmenuP2pool::Advanced
                 {
-                    return Err("Error: no Node for p2pool has been found.\nClick on the button to start finding one or check your connection.\nOtherwise you can use a local Node instead".to_string());
+                    return Err(t!("Error: no Node for p2pool has been found.\nClick on the button to start finding one or check your connection.\nOtherwise you can use a local Node instead").to_string());
                 }
                 // check if a local node is not running and the button is checked
                 // if self.state.p2pool.local_node &&
@@ -741,7 +768,7 @@ impl crate::app::App {
             ProcessName::XmrigProxy => &self.state.gupax.xmrig_proxy_path,
             ProcessName::Xvb => {
                 if !Regexes::addr_ok(&self.state.p2pool.address) {
-                    return Err(format!("Error: {XVB_NOT_CONFIGURED}"));
+                    return Err(t_f!("Error: {}", xvb_not_configured()));
                 }
                 ""
             }

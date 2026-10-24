@@ -3,6 +3,7 @@ use crate::app::panels::middle::*;
 use crate::app::submenu_enum::SubmenuGupax;
 use crate::components::update::check_binary_path;
 use crate::disk::state::*;
+use crate::utils::i18n::t;
 use std::sync::Arc;
 use std::sync::Mutex;
 use strum::IntoEnumIterator;
@@ -22,7 +23,7 @@ impl App {
         ui.group(|ui| {
             ui.vertical_centered(|ui| {
                 ui.add(Label::new(
-                    RichText::new("Visible Processes")
+                    RichText::new(t!("Visible Processes"))
                         .underline()
                         .color(LIGHT_GRAY),
                 ))
@@ -31,14 +32,14 @@ impl App {
             self.horizontal_flex_show_processes(ui, ProcessName::having_tab());
         })
         .response
-        .on_hover_text(
-            "Show(checked) elements (Tab/Status column/bottom status) related to a process",
-        );
+        .on_hover_text(t!(
+            "Show(checked) elements (Tab/Status column/bottom status) related to a process"
+        ));
 
         ui.group(|ui| {
             ui.vertical_centered(|ui| {
                 ui.add(Label::new(
-                    RichText::new("Default Behaviour")
+                    RichText::new(t!("Default Behaviour"))
                         .underline()
                         .color(LIGHT_GRAY),
                 ))
@@ -254,7 +255,11 @@ fn path_binary(
         }
         ui.spacing_mut().text_edit_width = (ui.available_width() - SPACE).max(0.0);
         ui.add_enabled_ui(!window_busy, |ui| {
-            if ui.button("Open").on_hover_text(GUPAX_SELECT).clicked() {
+            if ui
+                .button(t!("Open"))
+                .on_hover_text(gupax_select())
+                .clicked()
+            {
                 Gupax::spawn_file_window_thread(
                     file_window,
                     name.file_type()

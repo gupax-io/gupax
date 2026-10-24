@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::utils::i18n::{t, t_f};
 use egui::{Checkbox, TextStyle, Ui, vec2};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex};
@@ -29,16 +30,16 @@ use crate::helper::xrig::xmrig_proxy::PubXmrigProxyApi;
 use crate::helper::{Helper, Process, ProcessName};
 use crate::miscs::height_txt_before_button;
 use crate::regex::REGEXES;
-use crate::utils::constants::IP_NOT_FOUND;
+use crate::utils::constants::ip_not_found;
 use crate::{
-    SPACE, START_OPTIONS_HOVER, XMRIG_API_IP, XMRIG_API_PORT, XMRIG_IP, XMRIG_KEEPALIVE,
-    XMRIG_NAME, XMRIG_PORT, XMRIG_PROXY_INPUT, XMRIG_PROXY_REDIRECT, XMRIG_PROXY_URL, XMRIG_RIG,
-    XMRIG_TLS,
+    SPACE, XMRIG_PROXY_URL, start_options_hover, xmrig_api_ip, xmrig_api_port, xmrig_ip,
+    xmrig_keepalive, xmrig_name, xmrig_port, xmrig_proxy_input, xmrig_proxy_redirect, xmrig_rig,
+    xmrig_tls,
 };
 
 use super::common::list_poolnode::PoolNode;
 use super::common::state_edit_field::StateTextEdit;
-use super::{HELP_STRATUM_IP, HELP_STRATUM_PORT, XMRIG_API_TOKEN};
+use super::{help_stratum_ip, help_stratum_port, xmrig_api_token};
 
 impl XmrigProxy {
     #[inline(always)] // called once
@@ -60,7 +61,7 @@ impl XmrigProxy {
             ui,
             None,
             &[("XMRig-Proxy", XMRIG_PROXY_URL, "")],
-            Some("High performant proxy for your miners"),
+            Some(t!("High performant proxy for your miners")),
             true,
         );
         // console output for log
@@ -77,7 +78,7 @@ impl XmrigProxy {
                         buffer,
                         process,
                         r#"Commands: [h]ashrate, [c]onnections, [v]erbose, [w]orkers"#,
-                        XMRIG_PROXY_INPUT,
+                        xmrig_proxy_input(),
                     );
                 }
             });
@@ -94,7 +95,7 @@ impl XmrigProxy {
                     &default_args_simple,
                     &default_args_advanced,
                     Self::process_name().start_options_hint(),
-                    START_OPTIONS_HOVER,
+                    start_options_hover(),
                 );
                 if !self.arguments.is_empty() {
                     ui.disable();
@@ -105,9 +106,9 @@ impl XmrigProxy {
                 // ui.style_mut().spacing.icon_spacing = space_h;
                 ui.checkbox(
                     &mut self.redirect_local_xmrig,
-                    "Auto Redirect local Xmrig to Xmrig-Proxy",
+                    t!("Auto Redirect local Xmrig to Xmrig-Proxy"),
                 )
-                .on_hover_text(XMRIG_PROXY_REDIRECT);
+                .on_hover_text(xmrig_proxy_redirect());
 
                 // idea
                 // need to warn the user if local firewall is blocking port
@@ -183,15 +184,15 @@ impl XmrigProxy {
                                         let size = vec2(width, height);
                                         ui.add_sized(
                                             size,
-                                            Checkbox::new(&mut self.tls, "TLS Connection"),
+                                            Checkbox::new(&mut self.tls, t!("TLS Connection")),
                                         )
-                                        .on_hover_text(XMRIG_TLS);
+                                        .on_hover_text(xmrig_tls());
                                         ui.separator();
                                         ui.add_sized(
                                             size,
-                                            Checkbox::new(&mut self.keepalive, "Keepalive"),
+                                            Checkbox::new(&mut self.keepalive, t!("Keepalive")),
                                         )
-                                        .on_hover_text(XMRIG_KEEPALIVE);
+                                        .on_hover_text(xmrig_keepalive());
                                     });
                                 });
                             });
@@ -200,9 +201,9 @@ impl XmrigProxy {
             }
         // show instructions to connect miners to the proxy
         ui.add_space(SPACE);
-        ui.label("Instructions:");
-        ui.label("To connect a miner to this proxy, start xmrig with the option '-o IP:PORT':");
-        ui.label("If the miner is on the same local network as the proxy, use the local IP.\nIf not, use the public IP. You may have to open xmrig-proxy port in your firewall and or network router.");
+        ui.label(t!("Instructions:"));
+        ui.label(t!("To connect a miner to this proxy, start xmrig with the option '-o IP:PORT':"));
+        ui.label(t!("If the miner is on the same local network as the proxy, use the local IP.\nIf not, use the public IP. You may have to open xmrig-proxy port in your firewall and or network router."));
         ui.add_space(SPACE);
         // local ip and port
         // public ip (way to hide)
@@ -210,27 +211,27 @@ impl XmrigProxy {
 
         // button to refresh public ip address lookup
         // Do not fetch public ip automatically since it could take some time depending on the connection and the user might not want to fetch the dns server.
-        if ui.button("refresh ip").clicked() {
+        if ui.button(t!("refresh ip")).clicked() {
             // fetch ip
             Helper::spawn_ip_fetch(helper);
         }
-        ui.label("Local IP: ");
+        ui.label(t!("Local IP: "));
         if let Some(ip) = *local_ip.lock().unwrap() {
             ui.label(ip.to_string());
         } else {
-            ui.label(IP_NOT_FOUND);
+            ui.label(ip_not_found());
         }
-        ui.label("Public IP: ");
+        ui.label(t!("Public IP: "));
         if let Some(ip) = *public_ip.lock().unwrap() {
             ui.label(ip.to_string());
         } else {
-            ui.label(IP_NOT_FOUND);
+            ui.label(ip_not_found());
         }
-        ui.label(format!("PORT of xmrig-proxy: {}", self.bind_port()));
+        ui.label(t_f!("PORT of xmrig-proxy: {}", self.bind_port()));
 
         ui.add_enabled_ui(process.lock().unwrap().is_alive(), |ui| {
             if ui
-                .button("check if XMRig-Proxy is accessible outside of the local network")
+                .button(t!("check if XMRig-Proxy is accessible outside of the local network"))
                 .clicked()
             {
                 // check port
@@ -238,11 +239,11 @@ impl XmrigProxy {
             }
         })
         .response
-        .on_disabled_hover_text("Start the proxy to enable this button");
+        .on_disabled_hover_text(t!("Start the proxy to enable this button"));
         if *port_reachable.lock().unwrap() {
-            ui.label("Proxy port is reachable from outside the local network");
+            ui.label(t!("Proxy port is reachable from outside the local network"));
         } else {
-            ui.label("Proxy port is not reachable from outside the local network");
+            ui.label(t!("Proxy port is not reachable from outside the local network"));
         }
         });
     }
@@ -251,7 +252,7 @@ impl XmrigProxy {
         StateTextEdit::new(ui)
             .description(" Name      ")
             .max_ch(30)
-            .help_msg(XMRIG_NAME)
+            .help_msg(xmrig_name())
             .validations(&[|x| REGEXES.name.is_match(x)])
             .build(ui, &mut self.name)
     }
@@ -259,7 +260,7 @@ impl XmrigProxy {
         StateTextEdit::new(ui)
             .description(" PORT      ")
             .max_ch(5)
-            .help_msg(XMRIG_PORT)
+            .help_msg(xmrig_port())
             .validations(&[|x| REGEXES.port.is_match(x)])
             .build(ui, &mut self.p2pool_port)
     }
@@ -267,7 +268,7 @@ impl XmrigProxy {
         StateTextEdit::new(ui)
             .description(" IP        ")
             .max_ch(255)
-            .help_msg(XMRIG_IP)
+            .help_msg(xmrig_ip())
             .validations(&[|x| REGEXES.ipv4.is_match(x) || REGEXES.domain.is_match(x)])
             .build(ui, &mut self.p2pool_ip)
     }
@@ -275,14 +276,14 @@ impl XmrigProxy {
         StateTextEdit::new(ui)
             .description(" RIG ID    ")
             .max_ch(30)
-            .help_msg(XMRIG_RIG)
+            .help_msg(xmrig_rig())
             .build(ui, &mut self.rig)
     }
     fn api_ip_field(&mut self, ui: &mut Ui) -> bool {
         StateTextEdit::new(ui)
             .description(" API IP    ")
             .max_ch(255)
-            .help_msg(XMRIG_API_IP)
+            .help_msg(xmrig_api_ip())
             .validations(&[|x| REGEXES.ipv4.is_match(x) || REGEXES.domain.is_match(x)])
             .build(ui, &mut self.api_ip)
     }
@@ -290,7 +291,7 @@ impl XmrigProxy {
         StateTextEdit::new(ui)
             .description(" API PORT  ")
             .max_ch(5)
-            .help_msg(XMRIG_API_PORT)
+            .help_msg(xmrig_api_port())
             .validations(&[|x| REGEXES.port.is_match(x)])
             .build(ui, &mut self.api_port)
     }
@@ -298,14 +299,14 @@ impl XmrigProxy {
         StateTextEdit::new(ui)
             .description(" API TOKEN ")
             .max_ch(255)
-            .help_msg(XMRIG_API_TOKEN)
+            .help_msg(xmrig_api_token())
             .build(ui, &mut self.token)
     }
     fn stratum_ip_field(&mut self, ui: &mut Ui) -> bool {
         StateTextEdit::new(ui)
             .description(" BIND IP   ")
             .max_ch(255)
-            .help_msg(HELP_STRATUM_IP)
+            .help_msg(help_stratum_ip())
             .validations(&[|x| REGEXES.ipv4.is_match(x) || REGEXES.domain.is_match(x)])
             .build(ui, &mut self.ip)
     }
@@ -313,7 +314,7 @@ impl XmrigProxy {
         StateTextEdit::new(ui)
             .description(" BIND PORT ")
             .max_ch(5)
-            .help_msg(HELP_STRATUM_PORT)
+            .help_msg(help_stratum_port())
             .validations(&[|x| REGEXES.port.is_match(x)])
             .build(ui, &mut self.port)
     }

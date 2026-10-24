@@ -15,12 +15,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::utils::i18n::t;
 use egui::{Button, ComboBox, RichText, TextStyle, Ui};
 use log::{debug, info};
 
 use crate::{
-    LIST_ADD, LIST_CLEAR, LIST_DELETE, LIST_SAVE,
     disk::{node::Node, pool::Pool, state::SelectedPoolNode},
+    list_add, list_clear, list_delete, list_save,
 };
 #[derive(Clone, Debug, PartialEq)]
 pub enum PoolNode {
@@ -123,8 +124,8 @@ fn clear_node(ui: &mut Ui, current: &mut (&mut String, &mut String, &mut String,
             || !current.3.is_empty(),
         |ui| {
             if ui
-                .add_sized([ui.available_width(), 0.0], Button::new("Clear"))
-                .on_hover_text(LIST_CLEAR)
+                .add_sized([ui.available_width(), 0.0], Button::new(t!("Clear")))
+                .on_hover_text(list_clear())
                 .clicked()
             {
                 current.0.clear();
@@ -199,7 +200,7 @@ fn add_save_node(
         }
         existing_index += 1;
     }
-    let text = if exists { LIST_SAVE } else { LIST_ADD };
+    let text = if exists { list_save() } else { list_add() };
     let text = format!(
         "{}\n    Currently selected node: {}. {}\n    Current amount of {}: {}/1000",
         text,
@@ -212,7 +213,7 @@ fn add_save_node(
     if exists {
         ui.add_enabled_ui(!incorrect_input && save_diff, |ui| {
             if ui
-                .add_sized([ui.available_width(), 0.0], Button::new("Save"))
+                .add_sized([ui.available_width(), 0.0], Button::new(t!("Save")))
                 .on_hover_text(text)
                 .clicked()
             {
@@ -289,13 +290,13 @@ fn delete_node(
     ui.add_enabled_ui(node_vec_len > 1, |ui| {
         let text = format!(
             "{}\n    Currently selected node: {}. {}\n    Current amount of nodes: {}/1000",
-            LIST_DELETE,
+            list_delete(),
             selected.index + 1,
             selected.name,
             node_vec_len
         );
         if ui
-            .add_sized([ui.available_width(), 0.0], Button::new("Delete"))
+            .add_sized([ui.available_width(), 0.0], Button::new(t!("Delete")))
             .on_hover_text(text)
             .clicked()
         {

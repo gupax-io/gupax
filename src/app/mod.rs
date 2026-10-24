@@ -1,13 +1,5 @@
 use crate::APP_DEFAULT_HEIGHT;
 use crate::APP_DEFAULT_WIDTH;
-use crate::GUPAX_TAB_ABOUT;
-use crate::GUPAX_TAB_GUPAX;
-use crate::GUPAX_TAB_NODE;
-use crate::GUPAX_TAB_P2POOL;
-use crate::GUPAX_TAB_STATUS;
-use crate::GUPAX_TAB_XMRIG;
-use crate::GUPAX_TAB_XMRIG_PROXY;
-use crate::GUPAX_TAB_XVB;
 use crate::GUPAX_VERSION;
 use crate::OS;
 use crate::cli::Cli;
@@ -32,6 +24,14 @@ use crate::disk::state::State;
 use crate::errors::ErrorButtons;
 use crate::errors::ErrorFerris;
 use crate::errors::ErrorState;
+use crate::gupax_tab_about;
+use crate::gupax_tab_gupax;
+use crate::gupax_tab_node;
+use crate::gupax_tab_p2pool;
+use crate::gupax_tab_status;
+use crate::gupax_tab_xmrig;
+use crate::gupax_tab_xmrig_proxy;
+use crate::gupax_tab_xvb;
 use crate::helper::Helper;
 use crate::helper::Process;
 use crate::helper::ProcessName;
@@ -54,9 +54,9 @@ use crate::miscs::get_exe;
 use crate::miscs::get_exe_dir;
 use crate::utils::constants::VISUALS_GUPAX_DARK;
 use crate::utils::constants::VISUALS_GUPAX_LIGHT;
+use crate::utils::i18n::{t, t_f};
 use crate::utils::macros::arc_mut;
 use copy_dir::copy_dir;
-use derive_more::derive::Display;
 use eframe::CreationContext;
 use eframe::Renderer;
 use egui::Context;
@@ -572,12 +572,24 @@ impl App {
                     _ => None,
                 };
                 if let Some((e, ferris, button)) = set {
-                    app.error_state.set(format!("State file: {}\n\nTry deleting: {}\n\n(Warning: this will delete your Gupax settings)\n\n", e, app.state_path.display()), ferris, button);
+                    app.error_state.set(t_f!("State file: {}\n\nTry deleting: {}\n\n(Warning: this will delete your Gupax settings)\n\n", e, app.state_path.display()), ferris, button);
                 }
 
                 State::new()
             }
         };
+
+        // Apply the saved language as early as possible: the tray menu, the
+        // update message and error dialogs are built from here on.
+        let language = app.state.gupax.language;
+        crate::utils::i18n::set_language(language);
+        info!("App Init | Interface language: {}", language.code());
+        {
+            let mut update = app.update.lock().unwrap();
+            if update.msg == "No update in progress" {
+                update.msg = crate::utils::i18n::tr_ref("No update in progress").to_string();
+            }
+        }
 
         // Clamp window resolution scaling values.
         app.state.gupax.selected_scale = crate::miscs::clamp_scale(app.state.gupax.selected_scale);
@@ -598,7 +610,7 @@ impl App {
                     Merge(e) => (e.to_string(), ErrorFerris::Error, ErrorButtons::ResetState),
                     Parse(e) => (e.to_string(), ErrorFerris::Panic, ErrorButtons::Quit),
                 };
-                app.error_state.set(format!("Node list: {}\n\nTry deleting: {}\n\n(Warning: this will delete your custom node list)\n\n", e, app.node_path.display()), ferris, button);
+                app.error_state.set(t_f!("Node list: {}\n\nTry deleting: {}\n\n(Warning: this will delete your custom node list)\n\n", e, app.node_path.display()), ferris, button);
                 Node::new_vec()
             }
         };
@@ -620,7 +632,7 @@ impl App {
                     Merge(e) => (e.to_string(), ErrorFerris::Error, ErrorButtons::ResetState),
                     Parse(e) => (e.to_string(), ErrorFerris::Panic, ErrorButtons::Quit),
                 };
-                app.error_state.set(format!("Pool list: {}\n\nTry deleting: {}\n\n(Warning: this will delete your custom pool list)\n\n", e, app.pool_path.display()), ferris, button);
+                app.error_state.set(t_f!("Pool list: {}\n\nTry deleting: {}\n\n(Warning: this will delete your custom pool list)\n\n", e, app.pool_path.display()), ferris, button);
                 Pool::new_vec()
             }
         };
@@ -644,7 +656,7 @@ impl App {
                     Merge(e) => (e.to_string(), ErrorFerris::Error, ErrorButtons::ResetState),
                     Parse(e) => (e.to_string(), ErrorFerris::Panic, ErrorButtons::Quit),
                 };
-                app.error_state.set(format!("Gupax P2Pool Stats: {}\n\nTry deleting: {}\n\n(Warning: this will delete your P2Pool payout history...!)\n\n", e, app.gupax_p2pool_api_path.display()), ferris, button);
+                app.error_state.set(t_f!("Gupax P2Pool Stats: {}\n\nTry deleting: {}\n\n(Warning: this will delete your P2Pool payout history...!)\n\n", e, app.gupax_p2pool_api_path.display()), ferris, button);
             }
         }
         info!("App Init | Reading Gupax-P2Pool API files...");
@@ -666,7 +678,7 @@ impl App {
                     Merge(e) => (e.to_string(), ErrorFerris::Error, ErrorButtons::ResetState),
                     Parse(e) => (e.to_string(), ErrorFerris::Panic, ErrorButtons::Quit),
                 };
-                app.error_state.set(format!("Gupax P2Pool Stats: {}\n\nTry deleting: {}\n\n(Warning: this will delete your P2Pool payout history...!)\n\n", e, app.gupax_p2pool_api_path.display()), ferris, button);
+                app.error_state.set(t_f!("Gupax P2Pool Stats: {}\n\nTry deleting: {}\n\n(Warning: this will delete your P2Pool payout history...!)\n\n", e, app.gupax_p2pool_api_path.display()), ferris, button);
             }
         };
         drop(gupax_p2pool_api);
@@ -806,7 +818,7 @@ impl App {
             app.admin = true;
             warn!("Windows | Admin user detected!");
             app.error_state.set(
-                "Gupax was launched as Administrator!\nThis is not useful since Gupax v2.0.0"
+                t!("Gupax was launched as Administrator!\nThis is not useful since Gupax v2.0.0")
                     .to_string(),
                 ErrorFerris::Admin,
                 ErrorButtons::WindowsAdmin,
@@ -816,14 +828,23 @@ impl App {
         if sudo_check::check() != sudo_check::RunningAs::User {
             let id = sudo_check::check();
             error!("Unix | Regular user not detected: [{id:?}]");
-            app.error_state.set(format!("Gupax was launched as: [{id:?}]\nPlease launch Gupax with regular user permissions."), ErrorFerris::Panic, ErrorButtons::Quit);
+            app.error_state.set(
+                format!(
+                    "{} [{:?}]\n{}",
+                    t!("Gupax was launched as:"),
+                    id,
+                    t!("Please launch Gupax with regular user permissions.")
+                ),
+                ErrorFerris::Panic,
+                ErrorButtons::Quit,
+            );
         }
         // macOS re-locates "dangerous" applications into some read-only "/private" directory.
         // It _seems_ to be fixed by moving [Gupax.app] into "/Applications".
         // So, detect if we are in in "/private" and warn the user.
         #[cfg(target_os = "macos")]
         if app.exe.starts_with("/private") {
-            app.error_state.set(format!("macOS thinks Gupax is a virus!\n(macOS has relocated Gupax for security reasons)\n\nThe directory: [{}]\nSince this is a private read-only directory, it causes issues with updates and correctly locating P2Pool/XMRig. Please move Gupax into the [Applications] directory, this lets macOS relax a little.\n", app.exe), ErrorFerris::Panic, ErrorButtons::Quit);
+            app.error_state.set(t_f!("macOS thinks Gupax is a virus!\n(macOS has relocated Gupax for security reasons)\n\nThe directory: [{}]\nSince this is a private read-only directory, it causes issues with updates and correctly locating P2Pool/XMRig. Please move Gupax into the [Applications] directory, this lets macOS relax a little.\n", app.exe), ErrorFerris::Panic, ErrorButtons::Quit);
         }
         // An error stops the auto-start, so a [--tray] start shows the window
         // with the error.
@@ -975,7 +996,7 @@ impl App {
 //---------------------------------------------------------------------------------------------------- [Tab] Enum + Impl
 // The tabs inside [App].
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, Display, EnumIter, EnumCount, Default,
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, EnumIter, EnumCount, Default,
 )]
 pub enum Tab {
     #[default]
@@ -985,9 +1006,24 @@ pub enum Tab {
     Node,
     P2pool,
     Xmrig,
-    #[display("Proxy")]
     XmrigProxy,
     Xvb,
+}
+
+impl std::fmt::Display for Tab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Tab::About => crate::utils::i18n::tr("About"),
+            Tab::Status => crate::utils::i18n::tr("Status"),
+            Tab::Settings => crate::utils::i18n::tr("Settings"),
+            Tab::Node => crate::utils::i18n::tr("Node"),
+            Tab::P2pool => "P2Pool",
+            Tab::Xmrig => "XMRig",
+            Tab::XmrigProxy => crate::utils::i18n::tr("Proxy"),
+            Tab::Xvb => "XvB",
+        };
+        write!(f, "{s}")
+    }
 }
 
 impl Tab {
@@ -1005,14 +1041,14 @@ impl Tab {
     }
     pub fn msg_default_tab(&self) -> &str {
         match self {
-            Tab::About => GUPAX_TAB_ABOUT,
-            Tab::Status => GUPAX_TAB_STATUS,
-            Tab::Settings => GUPAX_TAB_GUPAX,
-            Tab::Node => GUPAX_TAB_NODE,
-            Tab::P2pool => GUPAX_TAB_P2POOL,
-            Tab::Xmrig => GUPAX_TAB_XMRIG,
-            Tab::XmrigProxy => GUPAX_TAB_XMRIG_PROXY,
-            Tab::Xvb => GUPAX_TAB_XVB,
+            Tab::About => gupax_tab_about(),
+            Tab::Status => gupax_tab_status(),
+            Tab::Settings => gupax_tab_gupax(),
+            Tab::Node => gupax_tab_node(),
+            Tab::P2pool => gupax_tab_p2pool(),
+            Tab::Xmrig => gupax_tab_xmrig(),
+            Tab::XmrigProxy => gupax_tab_xmrig_proxy(),
+            Tab::Xvb => gupax_tab_xvb(),
         }
     }
     pub fn from_process_name(process: &ProcessName) -> Self {

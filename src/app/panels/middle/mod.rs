@@ -22,6 +22,7 @@ use crate::components::gupax::FileWindow;
 use crate::helper::ProcessName;
 use crate::regex::REGEXES;
 use crate::utils::constants::*;
+use crate::utils::i18n::t;
 use common::state_edit_field::StateTextEdit;
 use egui::*;
 use log::debug;
@@ -159,7 +160,7 @@ fn rpc_port_field(field: &mut String, ui: &mut Ui) -> bool {
     StateTextEdit::new(ui)
         .description("   RPC PORT ")
         .max_ch(5)
-        .help_msg(NODE_API_PORT)
+        .help_msg(node_api_port())
         .validations(&[|x| REGEXES.port.is_match(x)])
         .build(ui, field)
 }
@@ -167,24 +168,24 @@ fn zmq_port_field(field: &mut String, ui: &mut Ui) -> bool {
     StateTextEdit::new(ui)
         .description("   ZMQ PORT ")
         .max_ch(5)
-        .help_msg(NODE_ZMQ_PORT)
+        .help_msg(node_zmq_port())
         .validations(&[|x| REGEXES.port.is_match(x)])
         .build(ui, field)
 }
 fn rpc_bind_field(field: &mut String, ui: &mut Ui) -> bool {
     StateTextEdit::new(ui)
-        .description("RPC BIND IP ")
+        .description(t!("RPC BIND IP "))
         .max_ch(255)
-        .help_msg(NODE_API_BIND)
+        .help_msg(node_api_bind())
         .validations(&[|x| REGEXES.ipv4.is_match(x), |x| REGEXES.domain.is_match(x)])
         .build(ui, field)
 }
 
 fn zmq_bind_field(field: &mut String, ui: &mut Ui) -> bool {
     StateTextEdit::new(ui)
-        .description("API BIND IP ")
+        .description(t!("API BIND IP "))
         .max_ch(255)
-        .help_msg(NODE_ZMQ_BIND)
+        .help_msg(node_zmq_bind())
         .validations(&[|x| REGEXES.ipv4.is_match(x), |x| REGEXES.domain.is_match(x)])
         .build(ui, field)
 }

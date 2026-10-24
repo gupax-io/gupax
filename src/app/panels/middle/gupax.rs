@@ -1,3 +1,4 @@
+use crate::utils::i18n::t;
 use crate::app::ErrorState;
 use crate::app::Restart;
 use crate::app::panels::middle::common::toggle::toggle_ui_compact;
@@ -48,15 +49,15 @@ impl Gupax {
                     #[cfg(feature = "distro")]
                     ui.disable();
                     #[cfg(feature = "distro")]
-                    // ui.add_sized([width, button], Button::new("Updates are disabled"))
+                    // ui.add_sized([width, button], Button::new(t!("Updates are disabled")))
                     // .on_disabled_hover_text(DISTRO_NO_UPDATE);
-                    ui.button("Updates are disabled")
+                    ui.button(t!("Updates are disabled")
                         .on_disabled_hover_text(DISTRO_NO_UPDATE);
                     #[cfg(not(feature = "distro"))]
                     ui.add_enabled_ui(!updating && *restart.lock().unwrap() == Restart::No, |ui| {
                         #[cfg(not(feature = "distro"))]
                         // if ui
-                        //     .add_sized([width, button], Button::new("Check for updates"))
+                        //     .add_sized([width, button], Button::new(t!("Check for updates")))
                         if ui
                             .button("Check for updates")
                             .on_hover_text(GUPAX_UPDATE)
@@ -97,7 +98,7 @@ impl Gupax {
             ui.group(|ui| {
                 ui.vertical_centered(|ui| {
                     ui.add(Label::new(
-                        RichText::new("Visible Processes")
+                        RichText::new(t!("Visible Processes"))
                             .underline()
                             .color(LIGHT_GRAY),
                     ))
@@ -106,14 +107,13 @@ impl Gupax {
                 self.horizontal_flex_show_processes(ui, ProcessName::having_tab());
             })
             .response
-            .on_hover_text(
-                "Show(checked) elements (Tab/Status column/bottom status) related to a process",
+            .on_hover_text(t!("Show(checked) elements (Tab/Status column/bottom status) related to a process"),
             );
             // debug!("Gupax Tab | Rendering bool buttons");
             ui.group(|ui| {
                 ui.vertical_centered(|ui| {
                     ui.add(Label::new(
-                        RichText::new("Default Behaviour")
+                        RichText::new(t!("Default Behaviour"))
                             .underline()
                             .color(LIGHT_GRAY),
                     ))
@@ -132,11 +132,11 @@ impl Gupax {
                 ui.push_id(2, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.add(Label::new(
-                            RichText::new("Node/P2Pool/XMRig/XMRig-Proxy PATHs")
+                            RichText::new(t!("Node/P2Pool/XMRig/XMRig-Proxy PATHs"))
                                 .underline()
                                 .color(LIGHT_GRAY),
                         ))
-                        .on_hover_text("Gupax is online");
+                        .on_hover_text(t!("Gupax is online"));
                     });
                     ui.separator();
                     ScrollArea::horizontal().show(ui, |ui| {
@@ -177,9 +177,9 @@ impl Gupax {
             ui.group(|ui| {
                 ui.vertical_centered(|ui| {
                     ui.add(Label::new(
-                        RichText::new("Default Tab").underline().color(LIGHT_GRAY),
+                        RichText::new(t!("Default Tab")).underline().color(LIGHT_GRAY),
                     ))
-                    .on_hover_text(GUPAX_TAB);
+                    .on_hover_text(gupax_tab());
                 });
                 ui.separator();
                 ui.push_id(1, |ui| {
@@ -216,11 +216,11 @@ impl Gupax {
             ui.group(|ui| {
                 ui.vertical_centered(|ui| {
                     ui.add(Label::new(
-                        RichText::new("Width/Height/Scaling Adjustment")
+                        RichText::new(t!("Width/Height/Scaling Adjustment"))
                             .underline()
                             .color(LIGHT_GRAY),
                     ))
-                    .on_hover_text(GUPAX_ADJUST);
+                    .on_hover_text(gupax_adjust());
                     ui.separator();
                 });
                 ui.horizontal(|ui| {
@@ -250,7 +250,7 @@ impl Gupax {
                                 slider_state_field(
                                     ui,
                                     &description,
-                                    GUPAX_WIDTH,
+                                    gupax_width(),
                                     &mut self.selected_width,
                                     APP_MIN_WIDTH as u16..=APP_MAX_WIDTH as u16,
                                 );
@@ -263,7 +263,7 @@ impl Gupax {
                                 slider_state_field(
                                     ui,
                                     &description,
-                                    GUPAX_HEIGHT,
+                                    gupax_height(),
                                     &mut self.selected_height,
                                     APP_MIN_HEIGHT as u16..=APP_MAX_HEIGHT as u16,
                                 );
@@ -288,7 +288,7 @@ impl Gupax {
                                     )
                                     .step_by(0.1),
                                 )
-                                .on_hover_text(GUPAX_SCALE);
+                                .on_hover_text(gupax_scale());
                             });
                         });
                         ui.style_mut().override_text_style = Some(egui::TextStyle::Button);
@@ -298,30 +298,30 @@ impl Gupax {
                             use Ratio::*;
                             ui.horizontal(|ui| {
                                 if ui
-                                    .selectable_label(self.ratio == Width, "Lock to width")
-                                    .on_hover_text(GUPAX_LOCK_WIDTH)
+                                    .selectable_label(self.ratio == Width, t!("Lock to width"))
+                                    .on_hover_text(gupax_lock_width())
                                     .clicked()
                                 {
                                     self.ratio = Width;
                                 }
                                 ui.separator();
                                 if ui
-                                    .selectable_label(self.ratio == Height, "Lock to height")
-                                    .on_hover_text(GUPAX_LOCK_HEIGHT)
+                                    .selectable_label(self.ratio == Height, t!("Lock to height"))
+                                    .on_hover_text(gupax_lock_height())
                                     .clicked()
                                 {
                                     self.ratio = Height;
                                 }
                                 ui.separator();
                                 if ui
-                                    .selectable_label(self.ratio == None, "No lock")
-                                    .on_hover_text(GUPAX_NO_LOCK)
+                                    .selectable_label(self.ratio == None, t!("No lock"))
+                                    .on_hover_text(gupax_no_lock())
                                     .clicked()
                                 {
                                     self.ratio = None;
                                 }
                                 ui.separator();
-                                if ui.button("Set").on_hover_text(GUPAX_SET).clicked() {
+                                if ui.button("Set").on_hover_text(gupax_set()).clicked() {
                                     let size = Vec2::new(
                                         self.selected_width as f32,
                                         self.selected_height as f32,
@@ -345,11 +345,11 @@ impl Gupax {
                                 .underline()
                                 .color(LIGHT_GRAY),
                         ))
-                        .on_hover_text(GUPAX_RENDERER);
+                        .on_hover_text(gupax_renderer());
                     ui.separator();
                     if toggle_ui_compact(&mut self.renderer_use_glow, ui)
                         .labelled_by(label.id)
-                        .on_hover_text("Disabled: WGPU\nEnabled: GLOW")
+                        .on_hover_text(t!("Disabled: WGPU\nEnabled: GLOW"))
                         .clicked()
                     {
                         *restart.lock().unwrap() = Restart::Yes
@@ -360,9 +360,9 @@ impl Gupax {
             ui.group(|ui| {
                 ui.vertical_centered(|ui| {
                     ui.add(Label::new(
-                        RichText::new("Notifications").underline().color(LIGHT_GRAY),
+                        RichText::new(t!("Notifications")).underline().color(LIGHT_GRAY),
                     ))
-                    .on_hover_text(GUPAX_ADJUST);
+                    .on_hover_text(gupax_adjust());
                     ui.separator();
                     self.horizontal_flex_notifications(
                         ui,
@@ -541,7 +541,7 @@ fn path_binary(
             - name.to_string().len()
             + 1,
     );
-    let msg = format!(" {name}{flex_space}Binary Path");
+    let msg = format!(" {name}{flex_space}{}", t!("Binary Path"));
     // need to precise the height of text or there will be an misalignment with the button if it's bigger than the text.
     let height =
         (ui.style().spacing.button_padding.y * 2.0) + ui.text_style_height(&TextStyle::Body);
@@ -573,7 +573,7 @@ fn path_binary(
         }
         ui.spacing_mut().text_edit_width = (ui.available_width() - SPACE).max(0.0);
         ui.add_enabled_ui(!window_busy, |ui| {
-            if ui.button("Open").on_hover_text(GUPAX_SELECT).clicked() {
+            if ui.button(t!("Open")).on_hover_text(gupax_select()).clicked() {
                 Gupax::spawn_file_window_thread(
                     file_window,
                     name.file_type()

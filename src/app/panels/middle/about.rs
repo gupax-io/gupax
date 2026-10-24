@@ -6,6 +6,7 @@ use crate::{
     app::keys::KeyPressed,
     components::update::Update,
     errors::{ErrorButtons, ErrorFerris},
+    utils::i18n::{t, t_f},
 };
 
 impl crate::app::App {
@@ -69,9 +70,9 @@ path_xmr: {:#?}\n
 ------------------------------------------ ORIGINAL STATE ------------------------------------------
 {:#?}",
 							GUPAX_VERSION,
-							Update::get_version_binary(&self.state.gupax.absolute_p2pool_path).unwrap_or(String::from("No P2Pool binary found")),
-							Update::get_version_binary(&self.state.gupax.absolute_xmrig_path).unwrap_or(String::from("No XMRig binary found")),
-							Update::get_version_binary(&self.state.gupax.absolute_xp_path).unwrap_or(String::from("No Xmrig-Proxy binary found")),
+							Update::get_version_binary(&self.state.gupax.absolute_p2pool_path).unwrap_or(String::from(t!("No P2Pool binary found"))),
+							Update::get_version_binary(&self.state.gupax.absolute_xmrig_path).unwrap_or(String::from(t!("No XMRig binary found"))),
+							Update::get_version_binary(&self.state.gupax.absolute_xp_path).unwrap_or(String::from(t!("No Xmrig-Proxy binary found"))),
 							self.now.elapsed().as_secs_f32(),
 							self.state.gupax.selected_width,
 							self.state.gupax.selected_height,
@@ -122,31 +123,31 @@ path_xmr: {:#?}\n
                 Vec2::new(ui.text_style_height(&TextStyle::Heading) * 20.0, 226.0),
                 Image::from_bytes("bytes://banner.png", BYTES_BANNER),
             );
-            ui.label("is a GUI for mining");
+            ui.label(t!("is a GUI for mining"));
             ui.add_space(space);
             ui.hyperlink_to("[Monero]", "https://www.getmonero.org");
-            ui.label("on");
+            ui.label(t!("on"));
             ui.hyperlink_to("[P2Pool]", "https://www.github.com/SChernykh/p2pool");
             ui.add_space(space);
-            ui.label("using");
+            ui.label(t!("using"));
             ui.add_space(space);
             ui.hyperlink_to("[Monerod]", "https://github.com/monero-project/monero");
             ui.hyperlink_to("[Xmrig]", "https://www.github.com/xmrig/xmrig");
             ui.hyperlink_to("[Xmrig-Proxy]", "https://www.github.com/xmrig/xmrig-proxy");
             ui.add_space(space);
-            ui.label(" and participating in");
+            ui.label(t!(" and participating in"));
             ui.hyperlink_to("[XvB Bonus Hashrate Raffle]", "https://xmrvsbeast.com");
             ui.add_space(space);
             ui.add_sized([ui.available_width(), 0.0], Label::new(KEYBOARD_SHORTCUTS));
             ui.add_space(space);
 
             if cfg!(debug_assertions) {
-                ui.label(format!(
+                ui.label(t_f!(
                     "Gupax is running in debug mode - {}",
                     self.now.elapsed().as_secs_f64()
                 ));
             }
-            ui.label(format!(
+            ui.label(t_f!(
                 "Gupax has been running for\n{}",
                 self.pub_sys.lock().unwrap().gupax_uptime
             ));

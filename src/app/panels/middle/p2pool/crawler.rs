@@ -1,3 +1,4 @@
+use crate::utils::i18n::{t, t_f};
 use std::sync::{Arc, Mutex};
 
 use egui::{
@@ -13,10 +14,10 @@ use crate::{
     helper::{crawler::Crawler, p2pool::PubP2poolApi},
     miscs::height_txt_before_button,
     utils::constants::{
-        BUTTON_DISABLED_BY_EMPTY_LIST_NODES, CRAWLER_PARAMETERS_HELP, EXPECT_BUTTON_DISABLED,
-        ORANGE, P2POOL_AUTO_NODE, P2POOL_AUTOSWITCH_LOCAL_NODE, P2POOL_BACKUP_HOST_SIMPLE,
-        P2POOL_COMMUNITY_NODE_WARNING, P2POOL_PING, P2POOL_SELECT_FASTEST, P2POOL_SELECT_LAST,
-        P2POOL_SELECT_NEXT, P2POOL_SELECT_RANDOM, SPACE,
+        EXPECT_BUTTON_DISABLED, ORANGE, SPACE, button_disabled_by_empty_list_nodes,
+        crawler_parameters_help, p2pool_auto_node, p2pool_autoswitch_local_node,
+        p2pool_backup_host_simple, p2pool_community_node_warning, p2pool_ping,
+        p2pool_select_fastest, p2pool_select_last, p2pool_select_next, p2pool_select_random,
     },
 };
 
@@ -41,8 +42,8 @@ impl P2pool {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(ui.spacing().item_spacing.x);
-                    ui.add_sized([0.0, text_height], Label::new("Crawl Parameters"))
-                        .on_hover_text(CRAWLER_PARAMETERS_HELP);
+                    ui.add_sized([0.0, text_height], Label::new(t!("Crawl Parameters")))
+                        .on_hover_text(crawler_parameters_help());
                 });
                 ui.group(|ui| {
                     ui.set_max_width(0.0);
@@ -116,7 +117,7 @@ impl P2pool {
 
                 debug!("P2Pool Tab | Rendering [ComboBox] of Remote Nodes");
                 let ping_msg = if selected_node.ms == 0 {
-                    "Latency not measured".to_string()
+                    t!("Latency not measured").to_string()
                 } else {
                     format_ms(selected_node.ms).to_string()
                 };
@@ -143,7 +144,7 @@ impl P2pool {
                                 for data in ping_nodes.iter() {
                                     let ip = data.ip.to_string();
                                     let ping_msg = if data.ms == 0 {
-                                        "Latency not measured".to_string()
+                                        t!("Latency not measured").to_string()
                                     } else {
                                         format_ms(data.ms).to_string()
                                     };
@@ -219,21 +220,24 @@ impl P2pool {
                 );
                 // Auto-Select doesn't make sense since we don't store the list of remote nodes across restart, only the selected node.
                 // ui.add_sized(size, Checkbox::new(&mut self.auto_select, "Auto-select"))
-                //     .on_hover_text(P2POOL_AUTO_SELECT);
+                //     .on_hover_text(p2pool_auto_select());
                 // ui.separator();
-                ui.add_sized(size, Checkbox::new(&mut self.auto_ping, "Auto-ping"))
-                    .on_hover_text(P2POOL_AUTO_NODE);
+                ui.add_sized(size, Checkbox::new(&mut self.auto_ping, t!("Auto-ping")))
+                    .on_hover_text(p2pool_auto_node());
                 ui.separator();
-                ui.add_sized(size, Checkbox::new(&mut self.backup_host, "Backup host"))
-                    .on_hover_text(P2POOL_BACKUP_HOST_SIMPLE);
+                ui.add_sized(
+                    size,
+                    Checkbox::new(&mut self.backup_host, t!("Backup host")),
+                )
+                .on_hover_text(p2pool_backup_host_simple());
                 ui.separator();
                 // set preferred local node immediately if we are on simple mode.
                 if ui
                     .add_sized(
                         size,
-                        Checkbox::new(&mut self.prefer_local_node, "Auto-Switch to Local Node"),
+                        Checkbox::new(&mut self.prefer_local_node, t!("Auto-Switch to Local Node")),
                     )
-                    .on_hover_text(P2POOL_AUTOSWITCH_LOCAL_NODE)
+                    .on_hover_text(p2pool_autoswitch_local_node())
                     .clicked()
                 {
                     api.lock().unwrap().prefer_local_node = self.prefer_local_node;
@@ -251,9 +255,9 @@ impl P2pool {
             ui.add_space(SPACE);
             let crawling = crawler.lock().unwrap().crawling;
             let button_crawl_text = if crawling {
-                "Stop finding P2Pool compatible Nodes"
+                t!("Stop finding P2Pool compatible Nodes")
             } else {
-                "Find P2Pool compatible Nodes"
+                t!("Find P2Pool compatible Nodes")
             };
             // prevent user clicking on button if it's currently stopping
             let stopping = crawler.lock().unwrap().stopping;
@@ -261,7 +265,7 @@ impl P2pool {
             ui.add_enabled_ui(!stopping, |ui| {
                 if ui
                     .button(button_crawl_text)
-                    .on_hover_text("It will reset the current found nodes")
+                    .on_hover_text(t!("It will reset the current found nodes"))
                     .clicked()
                 {
                     if !crawling {
@@ -274,21 +278,21 @@ impl P2pool {
                 }
             })
             .response
-            .on_disabled_hover_text("Stopping the crawling...");
+            .on_disabled_hover_text(t!("Stopping the crawling..."));
             crawl_progress(crawler, ui);
         });
     }
     fn slider_latency(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui|{
         let text_height = height_txt_before_button(ui, &TextStyle::Button);
-        ui.add_sized([0.0, text_height], Label::new("Max latency (ms) of fast nodes"));
+        ui.add_sized([0.0, text_height], Label::new(t!("Max latency (ms) of fast nodes")));
         ui.spacing_mut().slider_width = ui.text_style_height(&TextStyle::Button) * 10.0;
         ui.add_sized(
             [ui.available_width(), text_height],
             Slider::new(&mut self.crawl_settings.max_ping_fast, 0..=100)
                 .text("ms")
         )
-        .on_hover_text("Set the maximum latency in millisecond where a found capable node is considered fast.");
+        .on_hover_text(t!("Set the maximum latency in millisecond where a found capable node is considered fast."));
         });
         // TODO make a state builder
         // slider_state_field(
@@ -306,41 +310,43 @@ impl P2pool {
             let text_height = height_txt_before_button(ui, &TextStyle::Button);
             ui.add_sized(
                 [0.0, text_height],
-                Label::new("Number of                     "),
+                Label::new(t!("Number of                     ")),
             );
             // ui.spacing_mut().slider_width = ui.text_style_height(&TextStyle::Button) * 18.0;
             ui.spacing_mut().slider_width = ui.text_style_height(&TextStyle::Button) * 10.0;
             ui.add_sized(
                 [ui.available_width(), text_height],
-                Slider::new(&mut self.crawl_settings.nb_nodes_fast, 1..=10).text("Fast Nodes"),
+                Slider::new(&mut self.crawl_settings.nb_nodes_fast, 1..=10).text(t!("Fast Nodes")),
             )
-            .on_hover_text("How many fast nodes the crawler must find before stopping");
+            .on_hover_text(t!(
+                "How many fast nodes the crawler must find before stopping"
+            ));
         });
     }
     fn slider_nb_medium_nodes(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui|{
         let text_height = height_txt_before_button(ui, &TextStyle::Button);
-        ui.add_sized([0.0, text_height], Label::new("Maximum number of             "));
+        ui.add_sized([0.0, text_height], Label::new(t!("Maximum number of             ")));
         ui.spacing_mut().slider_width = ui.text_style_height(&TextStyle::Button) * 10.0;
         ui.add_sized(
             [ui.available_width(), text_height],
             Slider::new(&mut self.crawl_settings.nb_nodes_medium, 1..=10)
-                .text("Medium Nodes")
+                .text(t!("Medium Nodes"))
         )
-        .on_hover_text("How many mediumly fast nodes the crawler must find before replacing the slowest ones.\nUsefull in case no fast nodes are found or to be used as backup nodes");
+        .on_hover_text(t!("How many mediumly fast nodes the crawler must find before replacing the slowest ones.\nUsefull in case no fast nodes are found or to be used as backup nodes"));
         });
     }
     fn slider_timeout(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui|{
         let text_height = height_txt_before_button(ui, &TextStyle::Button);
-        ui.add_sized([0.0, text_height], Label::new("Timeout                       "));
+        ui.add_sized([0.0, text_height], Label::new(t!("Timeout                       ")));
         ui.spacing_mut().slider_width = ui.text_style_height(&TextStyle::Button) * 10.0;
         ui.add_sized(
             [ui.available_width(), text_height],
             Slider::new(&mut self.crawl_settings.timeout, 1..=600)
-                .text("seconds")
+                .text(t!("seconds"))
         )
-        .on_hover_text("Maximum duration for the crawler before terminationg even if it didn't reach the requirements.\nConsider raising this value if you don't find enough fast nodes");
+        .on_hover_text(t!("Maximum duration for the crawler before terminationg even if it didn't reach the requirements.\nConsider raising this value if you don't find enough fast nodes"));
         });
     }
 }
@@ -350,12 +356,12 @@ pub fn warning_should_run_local_node(ui: &mut Ui) {
     ui.add_space(SPACE);
     ui.vertical_centered(|ui| {
         ui.add(Label::new(
-            RichText::new(
-                "WARNING: It is recommended to run/use your own Monero Node (hover for details)",
-            )
+            RichText::new(t!(
+                "WARNING: It is recommended to run/use your own Monero Node (hover for details)"
+            ))
             .color(ORANGE),
         ))
-        .on_hover_text(P2POOL_COMMUNITY_NODE_WARNING);
+        .on_hover_text(p2pool_community_node_warning());
     });
 }
 fn crawl_progress(crawler: &Arc<Mutex<Crawler>>, ui: &mut Ui) {
@@ -366,10 +372,7 @@ fn crawl_progress(crawler: &Arc<Mutex<Crawler>>, ui: &mut Ui) {
         let msg = if prog < 100.0 {
             RichText::new(format!("{} ... {:?}%", crawler.lock().unwrap().msg, prog))
         } else {
-            RichText::new(format!(
-                "Crawling completed\n{}",
-                crawler.lock().unwrap().msg
-            ))
+            RichText::new(t_f!("Crawling completed\n{}", crawler.lock().unwrap().msg))
         };
         ui.add_space(SPACE);
         ui.label(msg);
@@ -411,7 +414,7 @@ fn last_node_button(
     ui.add_enabled_ui(found_multiple_nodes, |ui| {
         if ui
             .add_sized([width, height], Button::new("⬅ Last"))
-            .on_hover_text(P2POOL_SELECT_LAST)
+            .on_hover_text(p2pool_select_last())
             .clicked()
         {
             match ping_lock.pinged {
@@ -421,7 +424,7 @@ fn last_node_button(
         }
     })
     .response
-    .on_disabled_hover_text(BUTTON_DISABLED_BY_EMPTY_LIST_NODES);
+    .on_disabled_hover_text(button_disabled_by_empty_list_nodes());
 }
 fn next_node_button(
     width: f32,
@@ -435,8 +438,8 @@ fn next_node_button(
     let found_multiple_nodes = ping_lock.nodes.len() > 1;
     ui.add_enabled_ui(found_multiple_nodes, |ui| {
         if ui
-            .add_sized([width, height], Button::new("Next ➡"))
-            .on_hover_text(P2POOL_SELECT_NEXT)
+            .add_sized([width, height], Button::new(t!("Next ➡")))
+            .on_hover_text(p2pool_select_next())
             .clicked()
         {
             match ping_lock.pinged {
@@ -453,8 +456,8 @@ fn ping_button(ping: &Arc<Mutex<Ping>>, width: f32, height: f32, ui: &mut Ui) {
     let pinging = ping_lock.pinging;
     ui.add_enabled_ui(node_found && !pinging, |ui| {
         if ui
-            .add_sized([width, height], Button::new("Ping remote nodes"))
-            .on_hover_text(P2POOL_PING)
+            .add_sized([width, height], Button::new(t!("Ping remote nodes")))
+            .on_hover_text(p2pool_ping())
             .clicked()
         {
             // drop(ping_lock);
@@ -463,9 +466,9 @@ fn ping_button(ping: &Arc<Mutex<Ping>>, width: f32, height: f32, ui: &mut Ui) {
     })
     .response
     .on_disabled_hover_text(if node_found {
-        BUTTON_DISABLED_BY_EMPTY_LIST_NODES
+        button_disabled_by_empty_list_nodes()
     } else {
-        "Already pinging remote nodes"
+        t!("Already pinging remote nodes")
     });
 }
 
@@ -481,8 +484,8 @@ fn select_fastest_node_button(
     let found_multiple_nodes = ping_lock.nodes.len() > 1;
     ui.add_enabled_ui(found_multiple_nodes, |ui| {
         if ui
-            .add_sized([width, height], Button::new("Select fastest node"))
-            .on_hover_text(P2POOL_SELECT_FASTEST)
+            .add_sized([width, height], Button::new(t!("Select fastest node")))
+            .on_hover_text(p2pool_select_fastest())
             .clicked()
         {
             *selected_node = ping_lock
@@ -493,7 +496,7 @@ fn select_fastest_node_button(
         }
     })
     .response
-    .on_disabled_hover_text(BUTTON_DISABLED_BY_EMPTY_LIST_NODES);
+    .on_disabled_hover_text(button_disabled_by_empty_list_nodes());
 }
 
 fn select_random_node_button(
@@ -508,8 +511,8 @@ fn select_random_node_button(
     let found_multiple_nodes = ping_lock.nodes.len() > 1;
     ui.add_enabled_ui(found_multiple_nodes, |ui| {
         if ui
-            .add_sized([width, height], Button::new("Select random node"))
-            .on_hover_text(P2POOL_SELECT_RANDOM)
+            .add_sized([width, height], Button::new(t!("Select random node")))
+            .on_hover_text(p2pool_select_random())
             .clicked()
         {
             let node = ping_lock
@@ -521,5 +524,5 @@ fn select_random_node_button(
         }
     })
     .response
-    .on_disabled_hover_text(BUTTON_DISABLED_BY_EMPTY_LIST_NODES);
+    .on_disabled_hover_text(button_disabled_by_empty_list_nodes());
 }

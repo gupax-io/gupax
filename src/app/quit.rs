@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::utils::i18n::t;
 use std::process::exit;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -124,7 +125,7 @@ impl App {
             }
             CloseAction::AskTrayOnClose => {
                 self.error_state.set(
-                    "Gupax can keep running in the system tray when the window is closed.\nKeep Gupax running in the tray when closing the window?\n(You can change this later with the \"Close to tray\" checkbox)",
+                    t!("Gupax can keep running in the system tray when the window is closed.\nKeep Gupax running in the tray when closing the window?\n(You can change this later with the \"Close to tray\" checkbox)"),
                     ErrorFerris::Cute,
                     ErrorButtons::TrayOnClose,
                 );
@@ -186,9 +187,9 @@ impl App {
         }
         self.persist_gupax_flag(|gupax| gupax.notified_hidden_to_tray = true);
         std::thread::spawn(|| {
-            crate::helper::notification::notif(
-                "Gupax keeps running in the system tray.\nUse the tray icon to open it again or to quit.",
-            );
+            crate::helper::notification::notif(t!(
+                "Gupax keeps running in the system tray.\nUse the tray icon to open it again or to quit."
+            ));
         });
     }
 

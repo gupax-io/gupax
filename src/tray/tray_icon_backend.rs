@@ -18,6 +18,7 @@
 //! Windows/macOS tray backend: the `tray-icon` crate.
 //! Events arrive through global callbacks.
 
+use crate::utils::i18n::t;
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -83,8 +84,8 @@ impl TrayBackend {
             crate::miscs::icon_rgba(crate::utils::constants::BYTES_TRAY_ICON_TEMPLATE);
         let icon = Icon::from_rgba(rgba, width, height)?;
 
-        let show_hide = MenuItem::with_id(SHOW_HIDE_ID, "Hide Gupax", true, None);
-        let quit = MenuItem::with_id(QUIT_ID, "Quit Gupax", true, None);
+        let show_hide = MenuItem::with_id(SHOW_HIDE_ID, t!("Hide Gupax"), true, None);
+        let quit = MenuItem::with_id(QUIT_ID, t!("Quit Gupax"), true, None);
         let menu = Menu::new();
         menu.append_items(&[&show_hide, &PredefinedMenuItem::separator(), &quit])?;
 
@@ -116,7 +117,10 @@ impl TrayBackend {
     }
 
     pub fn set_window_visible(&self, visible: bool) {
-        self.show_hide
-            .set_text(if visible { "Hide Gupax" } else { "Show Gupax" });
+        self.show_hide.set_text(if visible {
+            t!("Hide Gupax")
+        } else {
+            t!("Show Gupax")
+        });
     }
 }

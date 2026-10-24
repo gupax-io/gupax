@@ -21,6 +21,7 @@
 //! GNOME needs an AppIndicator extension to display the icon; KDE and most
 //! other desktop environments display it by default.
 
+use crate::utils::i18n::t;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, OnceLock};
@@ -148,9 +149,9 @@ impl ksni::Tray for GupaxTray {
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::{MenuItem, StandardItem};
         let show_hide = if self.window_visible {
-            "Hide Gupax"
+            t!("Hide Gupax")
         } else {
-            "Show Gupax"
+            t!("Show Gupax")
         };
         vec![
             StandardItem {
@@ -163,7 +164,7 @@ impl ksni::Tray for GupaxTray {
             .into(),
             MenuItem::Separator,
             StandardItem {
-                label: "Quit Gupax".into(),
+                label: t!("Quit Gupax").into(),
                 activate: Box::new(|tray: &mut Self| {
                     tray.sender.send(TrayCmd::Quit);
                 }),

@@ -4,6 +4,7 @@ use crate::app::submenu_enum::SubmenuP2pool;
 use crate::disk::state::{P2pool, StartOptionsMode, State};
 use crate::helper::crawler::Crawler;
 use crate::helper::p2pool::PubP2poolApi;
+use crate::utils::i18n::t;
 use egui::Image;
 // Gupax
 //
@@ -60,7 +61,7 @@ impl P2pool {
             ui,
             logo,
             &[("P2Pool", P2POOL_URL, "")],
-            Some("Decentralized pool for Monero mining"),
+            Some(t!("Decentralized pool for Monero mining")),
             true,
         );
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -73,8 +74,8 @@ impl P2pool {
                         ui,
                         buffer,
                         process,
-                        r#"Type a command (e.g "help" or "status") and press Enter"#,
-                        P2POOL_INPUT,
+                        t!(r#"Type a command (e.g "help" or "status") and press Enter"#),
+                        p2pool_input(),
                     );
                 }
             });
@@ -100,14 +101,14 @@ impl P2pool {
                     &default_args_simple,
                     &default_args_advanced,
                     Self::process_name().start_options_hint(),
-                    START_OPTIONS_HOVER,
+                    start_options_hover(),
                 );
             }
             debug!("P2Pool Tab | Rendering [Address]");
             crate::app::panels::middle::common::state_edit_field::monero_address_field(
                 &mut self.address,
                 ui,
-                P2POOL_ADDRESS,
+                p2pool_address(),
             );
             match self.submenu {
                 SubmenuP2pool::Simple => self.simple(ui, crawler, backup_nodes),

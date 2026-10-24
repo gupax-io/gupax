@@ -18,6 +18,7 @@ use crate::{
         xrig::xmrig_proxy::ImgProxy,
         xvb::algorithm::{AlgoConfig, ManualDonationLevel, ManualDonationMetric, XvbModeChoice},
     },
+    utils::i18n::{Language, t},
 };
 //---------------------------------------------------------------------------------------------------- [State] Impl
 impl Default for State {
@@ -234,6 +235,8 @@ pub struct Gupax {
     pub show_processes: Vec<ProcessName>,
     pub notifications: Vec<Notification>,
     pub theme: GupaxTheme,
+    #[serde(default)]
+    pub language: Language,
     pub renderer_use_glow: bool,
     pub updates: UpdateSettings,
     #[serde(default)]
@@ -351,11 +354,11 @@ pub enum GupaxTheme {
 }
 
 impl GupaxTheme {
-    pub fn helper(&self) -> &str {
+    pub fn helper(&self) -> &'static str {
         match self {
-            GupaxTheme::Dark => Self::HELPER_DARK,
-            GupaxTheme::Light => Self::HELPER_LIGHT,
-            GupaxTheme::System => Self::HELPER_SYSTEM,
+            GupaxTheme::Dark => t!(Self::HELPER_DARK),
+            GupaxTheme::Light => t!(Self::HELPER_LIGHT),
+            GupaxTheme::System => t!(Self::HELPER_SYSTEM),
         }
     }
     const HELPER_DARK: &str = "Dark theme of Gupax";
@@ -364,37 +367,52 @@ impl GupaxTheme {
         "Theme of the System\nIf the system theme is not detected, the dark theme will be used";
 }
 
-#[derive(
-    Clone, PartialEq, Debug, Deserialize, Serialize, EnumIter, PartialOrd, Display, Ord, Eq,
-)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Serialize, EnumIter, PartialOrd, Ord, Eq)]
 pub enum Notification {
     // A new payout occurred
     Payout,
     // Gupax found a share on p2pool for the first time
-    #[display("First P2Pool Share")]
     FirstP2poolShare,
     // A service is not in the green state anymore without a user intervention
-    #[display("Failed Service")]
     FailedService,
     // miner is disconnected from proxy
-    #[display("Disconnected Miner")]
     DisconnectedMiner,
+}
+
+impl std::fmt::Display for Notification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Notification::Payout => t!("Payout"),
+            Notification::FirstP2poolShare => t!("First P2Pool Share"),
+            Notification::FailedService => t!("Failed Service"),
+            Notification::DisconnectedMiner => t!("Disconnected Miner"),
+        };
+        write!(f, "{s}")
+    }
 }
 
 impl Notification {
     pub fn help_msg(&self) -> &str {
         match self {
             Notification::Payout => {
-                "Send a notification when you receive a payout.\nA payout occurs when you have one share or more in the current PPLNS window (current shares) and your P2Pool sidechain finds a block"
+                t!(
+                    "Send a notification when you receive a payout.\nA payout occurs when you have one share or more in the current PPLNS window (current shares) and your P2Pool sidechain finds a block"
+                )
             }
             Notification::FirstP2poolShare => {
-                "Send a notification when Gupax finds a share for the first time since P2Pool has been started."
+                t!(
+                    "Send a notification when Gupax finds a share for the first time since P2Pool has been started."
+                )
             }
             Notification::FailedService => {
-                "Send a notification when one of the running service start to fail without the user intervention"
+                t!(
+                    "Send a notification when one of the running service start to fail without the user intervention"
+                )
             }
             Notification::DisconnectedMiner => {
-                "Send a notification when one of the miner connected to the proxy does not send new hash"
+                t!(
+                    "Send a notification when one of the miner connected to the proxy does not send new hash"
+                )
             }
         }
     }
@@ -462,14 +480,14 @@ pub enum AutoStart {
     Process(ProcessName),
 }
 impl AutoStart {
-    pub const fn help_msg(&self) -> &str {
+    pub fn help_msg(&self) -> &str {
         match self {
-            AutoStart::Update => GUPAX_AUTO_UPDATE,
-            AutoStart::Crawl => GUPAX_AUTO_CRAWL,
-            AutoStart::AskBeforeQuit => GUPAX_ASK_BEFORE_QUIT,
-            AutoStart::SaveBeforequit => GUPAX_SAVE_BEFORE_QUIT,
-            AutoStart::HideToTray => GUPAX_HIDE_TO_TRAY,
-            AutoStart::StartWithTray => GUPAX_START_WITH_TRAY,
+            AutoStart::Update => gupax_auto_update(),
+            AutoStart::Crawl => gupax_auto_crawl(),
+            AutoStart::AskBeforeQuit => gupax_ask_before_quit(),
+            AutoStart::SaveBeforequit => gupax_save_before_quit(),
+            AutoStart::HideToTray => gupax_hide_to_tray(),
+            AutoStart::StartWithTray => gupax_start_with_tray(),
             AutoStart::Process(p) => p.msg_auto_help(),
         }
     }
@@ -759,6 +777,7 @@ impl Default for Gupax {
             show_processes: vec![ProcessName::P2pool, ProcessName::Xmrig],
             notifications: Notification::iter().collect(),
             theme: GupaxTheme::default(),
+            language: Language::default(),
             renderer_use_glow: false,
             updates: UpdateSettings::default(),
             asked_close_to_tray: false,

@@ -1,3 +1,4 @@
+use crate::utils::i18n::{t, t_f};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -12,7 +13,7 @@ use crate::tray::QuitRequest;
 #[cfg(not(feature = "distro"))]
 use crate::utils::errors::WarnUpdateData;
 use crate::utils::renderer::RendererAttempts;
-use crate::{NODE_MIDDLE, P2POOL_MIDDLE, SECOND, XMRIG_MIDDLE, XMRIG_PROXY_MIDDLE, XVB_MIDDLE};
+use crate::{SECOND, node_middle, p2pool_middle, xmrig_middle, xmrig_proxy_middle, xvb_middle};
 use derive_more::derive::{Deref, DerefMut};
 use log::{debug, error, info, warn};
 
@@ -357,6 +358,7 @@ fn app_creator(
     let tray_channel = tray_channel.clone();
     Box::new(move |cc| {
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        crate::utils::i18n::install_fonts(&cc.egui_ctx);
         Ok(Box::new(GuiApp::cc(
             cc,
             resolution,
@@ -477,7 +479,7 @@ impl eframe::App for GuiApp {
                 .is_process_running(&mut app.helper.lock().unwrap().sys_info.lock().unwrap())
             && !process_states.find(ProcessName::Xmrig).alive
         {
-            app.error_state.set("An instance of xmrig is running outside of Gupax.\nThis is not supported and could lead to crashes on this platform.\nPlease stop your local instance and start xmrig from Gupax Xmrig tab.", ErrorFerris::Error, ErrorButtons::Okay);
+            app.error_state.set(t!("An instance of xmrig is running outside of Gupax.\nThis is not supported and could lead to crashes on this platform.\nPlease stop your local instance and start xmrig from Gupax Xmrig tab."), ErrorFerris::Error, ErrorButtons::Okay);
             app.xmrig_outside_warning_acknowledge = true;
         }
 
@@ -537,11 +539,11 @@ pub struct ProcessStateGui {
 impl ProcessStateGui {
     pub fn run_middle_msg(&self) -> &str {
         match self.name {
-            ProcessName::Node => NODE_MIDDLE,
-            ProcessName::P2pool => P2POOL_MIDDLE,
-            ProcessName::Xmrig => XMRIG_MIDDLE,
-            ProcessName::XmrigProxy => XMRIG_PROXY_MIDDLE,
-            ProcessName::Xvb => XVB_MIDDLE,
+            ProcessName::Node => node_middle(),
+            ProcessName::P2pool => p2pool_middle(),
+            ProcessName::Xmrig => xmrig_middle(),
+            ProcessName::XmrigProxy => xmrig_proxy_middle(),
+            ProcessName::Xvb => xvb_middle(),
         }
     }
     pub fn stop(&self, helper: &Arc<Mutex<Helper>>) {
@@ -595,8 +597,8 @@ fn shutdown_screen(ui: &mut egui::Ui) {
     egui::CentralPanel::default().show(ui, |ui| {
         ui.vertical_centered(|ui| {
             ui.add_space(ui.available_height() / 3.0);
-            ui.heading("Stopping Gupax...");
-            ui.label("Waiting for the started processes to exit.");
+            ui.heading(t!("Stopping Gupax..."));
+            ui.label(t!("Waiting for the started processes to exit."));
         });
     });
 }
@@ -655,7 +657,7 @@ impl App {
             let xmrig_exist = self.state.gupax.absolute_xmrig_path.is_file();
             let xp_exist = self.state.gupax.absolute_xp_path.is_file();
             if !p2pool_exist || !node_exist || !xmrig_exist || !xp_exist {
-                let msg = format!(
+                let msg = t_f!(
                     "Gupax is missing the binary of:\n{}\n{}\n{}\n{}\n\nDo you want it to download them now ?",
                     if !p2pool_exist { "P2Pool" } else { "" },
                     if !node_exist { "Node" } else { "" },

@@ -20,9 +20,10 @@ use crate::app::panels::middle::common::header_tab::header_tab;
 use crate::app::panels::middle::common::state_edit_field::{path_db_field, slider_state_field};
 use crate::app::panels::middle::{rpc_bind_field, rpc_port_field, zmq_bind_field, zmq_port_field};
 use crate::utils::constants::BYTES_MONERO;
+use crate::utils::i18n::t;
 use crate::{
-    NODE_DNS_BLOCKLIST, NODE_DNS_CHECKPOINT, NODE_FULL_MEM, NODE_INPUT, NODE_PRUNNING, NODE_URL,
-    START_OPTIONS_HOVER,
+    NODE_URL, node_dns_blocklist, node_dns_checkpoint, node_full_mem, node_input, node_prunning,
+    start_options_hover,
 };
 use egui::{Image, TextStyle};
 use std::sync::{Arc, Mutex};
@@ -33,7 +34,7 @@ use crate::components::gupax::FileWindow;
 use crate::disk::state::{Node, StartOptionsMode};
 use crate::helper::node::PubNodeApi;
 use crate::helper::{Process, ProcessName};
-use crate::{P2POOL_IN, P2POOL_LOG, P2POOL_OUT, SPACE};
+use crate::{SPACE, p2pool_in, p2pool_log, p2pool_out};
 
 impl Node {
     #[inline(always)] // called once
@@ -51,7 +52,7 @@ impl Node {
             ui,
             logo,
             &[("Monerod", NODE_URL, "")],
-            Some("C++ Monero Node"),
+            Some(t!("C++ Monero Node")),
             true,
         );
         // console output for log
@@ -67,7 +68,7 @@ impl Node {
                         buffer,
                         process,
                         r#"Commands: help, status, set_log <level>, diff"#,
-                        NODE_INPUT,
+                        node_input(),
                     );
                 }
             });
@@ -83,7 +84,7 @@ impl Node {
                     &default_args_simple,
                     &default_args_advanced,
                     Self::process_name().start_options_hint(),
-                    START_OPTIONS_HOVER,
+                    start_options_hover(),
                 );
                 //---------------------------------------------------------------------------------------------------- Prunned checkbox
                 if !self.arguments.is_empty() {
@@ -93,17 +94,17 @@ impl Node {
                 debug!("Node Tab | Rendering DNS  and Prunning buttons");
                 ui.horizontal(|ui| {
                     ui.group(|ui| {
-                        ui.checkbox(&mut self.pruned, "Prunned")
-                            .on_hover_text(NODE_PRUNNING);
+                        ui.checkbox(&mut self.pruned, t!("Prunned"))
+                            .on_hover_text(node_prunning());
                         ui.separator();
-                        ui.checkbox(&mut self.dns_blocklist, "DNS blocklist")
-                            .on_hover_text(NODE_DNS_BLOCKLIST);
+                        ui.checkbox(&mut self.dns_blocklist, t!("DNS blocklist"))
+                            .on_hover_text(node_dns_blocklist());
                         ui.separator();
-                        ui.checkbox(&mut self.disable_dns_checkpoint, "DNS checkpoint")
-                            .on_hover_text(NODE_DNS_CHECKPOINT);
+                        ui.checkbox(&mut self.disable_dns_checkpoint, t!("DNS checkpoint"))
+                            .on_hover_text(node_dns_checkpoint());
                         ui.separator();
-                        ui.checkbox(&mut self.full_memory, "Full memory")
-                            .on_hover_text(NODE_FULL_MEM);
+                        ui.checkbox(&mut self.full_memory, t!("Full memory"))
+                            .on_hover_text(node_full_mem());
                     });
                 });
 
@@ -132,24 +133,24 @@ impl Node {
                                 ui.add_space(SPACE);
                                 slider_state_field(
                                     ui,
-                                    "Out peers [2-450]:",
-                                    P2POOL_OUT,
+                                    t!("Out peers [2-450]:"),
+                                    p2pool_out(),
                                     &mut self.out_peers,
                                     2..=450,
                                 );
                                 ui.add_space(SPACE);
                                 slider_state_field(
                                     ui,
-                                    "In peers  [2-450]:",
-                                    P2POOL_IN,
+                                    t!("In peers  [2-450]:"),
+                                    p2pool_in(),
                                     &mut self.in_peers,
                                     2..=450,
                                 );
                                 ui.add_space(SPACE);
                                 slider_state_field(
                                     ui,
-                                    "Log level [ 0-4 ]:",
-                                    P2POOL_LOG,
+                                    t!("Log level [ 0-4 ]:"),
+                                    p2pool_log(),
                                     &mut self.log_level,
                                     0..=6,
                                 );

@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::utils::i18n::{t, t_f};
 use std::sync::{Arc, Mutex};
 
 use egui::{Button, Label, RichText, ScrollArea, Separator, Slider, TextStyle};
@@ -60,18 +61,16 @@ impl Status {
                         ui.add_sized(
                             [width, height],
                             Label::new(
-                                RichText::new(format!("Total Payouts: {}", api.payout)).underline(),
+                                RichText::new(t_f!("Total Payouts: {}", api.payout)).underline(),
                             ),
                         )
-                        .on_hover_text(STATUS_SUBMENU_PAYOUT);
+                        .on_hover_text(status_submenu_payout());
                         ui.add(Separator::default().vertical());
                         ui.add_sized(
                             [width, height],
-                            Label::new(
-                                RichText::new(format!("Total XMR: {}", api.xmr)).underline(),
-                            ),
+                            Label::new(RichText::new(t_f!("Total XMR: {}", api.xmr)).underline()),
                         )
-                        .on_hover_text(STATUS_SUBMENU_XMR);
+                        .on_hover_text(status_submenu_xmr());
                         // });
                         ui.add(Separator::default().vertical());
                         PayoutView::iter().enumerate().for_each(|(count, p)| {
@@ -129,9 +128,9 @@ impl Status {
                     if ui
                         .add_sized(
                             [width, height],
-                            Button::selectable(!self.manual_hash, "Automatic"),
+                            Button::selectable(!self.manual_hash, t!("Automatic")),
                         )
-                        .on_hover_text(STATUS_SUBMENU_AUTOMATIC)
+                        .on_hover_text(status_submenu_automatic())
                         .clicked()
                     {
                         self.manual_hash = false;
@@ -140,9 +139,9 @@ impl Status {
                     if ui
                         .add_sized(
                             [width, height],
-                            Button::selectable(self.manual_hash, "Manual"),
+                            Button::selectable(self.manual_hash, t!("Manual")),
                         )
-                        .on_hover_text(STATUS_SUBMENU_MANUAL)
+                        .on_hover_text(status_submenu_manual())
                         .clicked()
                     {
                         self.manual_hash = true;
@@ -151,7 +150,7 @@ impl Status {
                     ui.add_enabled_ui(self.manual_hash, |ui| {
                         if ui
                             .selectable_label(self.hash_metric == Hash::Hash, "Hash")
-                            .on_hover_text(STATUS_SUBMENU_HASH)
+                            .on_hover_text(status_submenu_hash())
                             .clicked()
                         {
                             self.hash_metric = Hash::Hash;
@@ -159,7 +158,7 @@ impl Status {
                         ui.separator();
                         if ui
                             .selectable_label(self.hash_metric == Hash::Kilo, "Kilo")
-                            .on_hover_text(STATUS_SUBMENU_KILO)
+                            .on_hover_text(status_submenu_kilo())
                             .clicked()
                         {
                             self.hash_metric = Hash::Kilo;
@@ -167,7 +166,7 @@ impl Status {
                         ui.separator();
                         if ui
                             .selectable_label(self.hash_metric == Hash::Mega, "Mega")
-                            .on_hover_text(STATUS_SUBMENU_MEGA)
+                            .on_hover_text(status_submenu_mega())
                             .clicked()
                         {
                             self.hash_metric = Hash::Mega;
@@ -175,7 +174,7 @@ impl Status {
                         ui.separator();
                         if ui
                             .selectable_label(self.hash_metric == Hash::Giga, "Giga")
-                            .on_hover_text(STATUS_SUBMENU_GIGA)
+                            .on_hover_text(status_submenu_giga())
                             .clicked()
                         {
                             self.hash_metric = Hash::Giga;
@@ -201,17 +200,17 @@ impl Status {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(height * 2.0);
                                 ui.set_min_height(min_height);
-                                ui.label(RichText::new("Monero Difficulty").underline())
-                                    .on_hover_text(STATUS_SUBMENU_MONERO_DIFFICULTY);
+                                ui.label(RichText::new(t!("Monero Difficulty")).underline())
+                                    .on_hover_text(status_submenu_monero_difficulty());
                                 ui.label(api.monero_difficulty.as_str());
-                                ui.label(RichText::new("Monero Hashrate").underline())
-                                    .on_hover_text(STATUS_SUBMENU_MONERO_HASHRATE);
+                                ui.label(RichText::new(t!("Monero Hashrate")).underline())
+                                    .on_hover_text(status_submenu_monero_hashrate());
                                 ui.label(api.monero_hashrate.as_str());
-                                ui.label(RichText::new("P2Pool Difficulty").underline())
-                                    .on_hover_text(STATUS_SUBMENU_P2POOL_DIFFICULTY);
+                                ui.label(RichText::new(t!("P2Pool Difficulty")).underline())
+                                    .on_hover_text(status_submenu_p2pool_difficulty());
                                 ui.label(api.p2pool_difficulty.as_str());
-                                ui.label(RichText::new("P2Pool Hashrate").underline())
-                                    .on_hover_text(STATUS_SUBMENU_P2POOL_HASHRATE);
+                                ui.label(RichText::new(t!("P2Pool Hashrate")).underline())
+                                    .on_hover_text(status_submenu_p2pool_hashrate());
                                 ui.label(api.p2pool_hashrate.as_str());
                             })
                         });
@@ -234,30 +233,34 @@ impl Status {
                                             api.monero_difficulty_u64,
                                         );
                                     ui.label(
-                                        RichText::new("Manually Inputted Hashrate").underline(),
+                                        RichText::new(t!("Manually Inputted Hashrate")).underline(),
                                     );
                                     ui.label(format!("{} H/s", Unsigned::from(hashrate)));
-                                    ui.label(RichText::new("P2Pool Block Mean").underline())
-                                        .on_hover_text(STATUS_SUBMENU_P2POOL_BLOCK_MEAN);
+                                    ui.label(RichText::new(t!("P2Pool Block Mean")).underline())
+                                        .on_hover_text(status_submenu_p2pool_block_mean());
                                     ui.label(api.p2pool_block_mean.display(false));
-                                    ui.label(RichText::new("Your P2Pool Share Mean").underline())
-                                        .on_hover_text(STATUS_SUBMENU_P2POOL_SHARE_MEAN);
+                                    ui.label(
+                                        RichText::new(t!("Your P2Pool Share Mean")).underline(),
+                                    )
+                                    .on_hover_text(status_submenu_p2pool_share_mean());
                                     ui.label(p2pool_share_mean.display(false));
-                                    ui.label(RichText::new("Your Solo Block Mean").underline())
-                                        .on_hover_text(STATUS_SUBMENU_SOLO_BLOCK_MEAN);
+                                    ui.label(RichText::new(t!("Your Solo Block Mean")).underline())
+                                        .on_hover_text(status_submenu_solo_block_mean());
                                     ui.label(solo_block_mean.display(false));
                                 } else {
-                                    ui.label(RichText::new("Your P2Pool Hashrate").underline())
-                                        .on_hover_text(STATUS_SUBMENU_YOUR_P2POOL_HASHRATE);
+                                    ui.label(RichText::new(t!("Your P2Pool Hashrate")).underline())
+                                        .on_hover_text(status_submenu_your_p2pool_hashrate());
                                     ui.label(format!("{} H/s", api.hashrate_1h));
-                                    ui.label(RichText::new("P2Pool Block Mean").underline())
-                                        .on_hover_text(STATUS_SUBMENU_P2POOL_BLOCK_MEAN);
+                                    ui.label(RichText::new(t!("P2Pool Block Mean")).underline())
+                                        .on_hover_text(status_submenu_p2pool_block_mean());
                                     ui.label(api.p2pool_block_mean.display(false));
-                                    ui.label(RichText::new("Your P2Pool Share Mean").underline())
-                                        .on_hover_text(STATUS_SUBMENU_P2POOL_SHARE_MEAN);
+                                    ui.label(
+                                        RichText::new(t!("Your P2Pool Share Mean")).underline(),
+                                    )
+                                    .on_hover_text(status_submenu_p2pool_share_mean());
                                     ui.label(api.p2pool_share_mean.display(false));
-                                    ui.label(RichText::new("Your Solo Block Mean").underline())
-                                        .on_hover_text(STATUS_SUBMENU_SOLO_BLOCK_MEAN);
+                                    ui.label(RichText::new(t!("Your Solo Block Mean")).underline())
+                                        .on_hover_text(status_submenu_solo_block_mean());
                                     ui.label(api.solo_block_mean.display(false));
                                 }
                             })
@@ -278,30 +281,38 @@ impl Status {
                                         hashrate,
                                         api.monero_hashrate_u64,
                                     );
-                                    ui.label(RichText::new("P2Pool Miners").underline())
-                                        .on_hover_text(STATUS_SUBMENU_P2POOL_MINERS);
+                                    ui.label(RichText::new(t!("P2Pool Miners")).underline())
+                                        .on_hover_text(status_submenu_p2pool_miners());
                                     ui.label(api.miners.as_str());
-                                    ui.label(RichText::new("P2Pool Dominance").underline())
-                                        .on_hover_text(STATUS_SUBMENU_P2POOL_DOMINANCE);
+                                    ui.label(RichText::new(t!("P2Pool Dominance")).underline())
+                                        .on_hover_text(status_submenu_p2pool_dominance());
                                     ui.label(api.p2pool_percent.as_str());
-                                    ui.label(RichText::new("Your P2Pool Dominance").underline())
-                                        .on_hover_text(STATUS_SUBMENU_YOUR_P2POOL_DOMINANCE);
+                                    ui.label(
+                                        RichText::new(t!("Your P2Pool Dominance")).underline(),
+                                    )
+                                    .on_hover_text(status_submenu_your_p2pool_dominance());
                                     ui.label(user_p2pool_percent.as_str());
-                                    ui.label(RichText::new("Your Monero Dominance").underline())
-                                        .on_hover_text(STATUS_SUBMENU_YOUR_MONERO_DOMINANCE);
+                                    ui.label(
+                                        RichText::new(t!("Your Monero Dominance")).underline(),
+                                    )
+                                    .on_hover_text(status_submenu_your_monero_dominance());
                                     ui.label(user_monero_percent.as_str());
                                 } else {
-                                    ui.label(RichText::new("P2Pool Miners").underline())
-                                        .on_hover_text(STATUS_SUBMENU_P2POOL_MINERS);
+                                    ui.label(RichText::new(t!("P2Pool Miners")).underline())
+                                        .on_hover_text(status_submenu_p2pool_miners());
                                     ui.label(api.miners.as_str());
-                                    ui.label(RichText::new("P2Pool Dominance").underline())
-                                        .on_hover_text(STATUS_SUBMENU_P2POOL_DOMINANCE);
+                                    ui.label(RichText::new(t!("P2Pool Dominance")).underline())
+                                        .on_hover_text(status_submenu_p2pool_dominance());
                                     ui.label(api.p2pool_percent.as_str());
-                                    ui.label(RichText::new("Your P2Pool Dominance").underline())
-                                        .on_hover_text(STATUS_SUBMENU_YOUR_P2POOL_DOMINANCE);
+                                    ui.label(
+                                        RichText::new(t!("Your P2Pool Dominance")).underline(),
+                                    )
+                                    .on_hover_text(status_submenu_your_p2pool_dominance());
                                     ui.label(api.user_p2pool_percent.as_str());
-                                    ui.label(RichText::new("Your Monero Dominance").underline())
-                                        .on_hover_text(STATUS_SUBMENU_YOUR_MONERO_DOMINANCE);
+                                    ui.label(
+                                        RichText::new(t!("Your Monero Dominance")).underline(),
+                                    )
+                                    .on_hover_text(status_submenu_your_monero_dominance());
                                     ui.label(api.user_monero_percent.as_str());
                                 }
                             })

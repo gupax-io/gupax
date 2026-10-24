@@ -33,12 +33,12 @@ pub enum PayoutView {
 }
 
 impl PayoutView {
-    pub const fn msg_help(&self) -> &str {
+    pub fn msg_help(&self) -> &str {
         match self {
-            Self::Latest => STATUS_SUBMENU_LATEST,
-            Self::Oldest => STATUS_SUBMENU_OLDEST,
-            Self::Biggest => STATUS_SUBMENU_SMALLEST,
-            Self::Smallest => STATUS_SUBMENU_BIGGEST,
+            Self::Latest => status_submenu_latest(),
+            Self::Oldest => status_submenu_oldest(),
+            Self::Biggest => status_submenu_smallest(),
+            Self::Smallest => status_submenu_biggest(),
         }
     }
 }

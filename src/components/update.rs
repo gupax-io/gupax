@@ -26,6 +26,7 @@
 //---------------------------------------------------------------------------------------------------- Imports
 #[cfg(target_family = "windows")]
 use crate::miscs::get_exe_dir;
+use crate::utils::i18n::{t, t_f};
 use crate::{
     app::BinariesVersion,
     disk::state::Gupax,
@@ -128,7 +129,7 @@ impl Update {
             inner: Arc::new(Mutex::new(InnerUpdate {
                 updating: false,
                 prog: 0.0,
-                msg: MSG_NONE.to_string(),
+                msg: crate::utils::i18n::tr_ref(MSG_NONE).to_string(),
                 gupax_versions: vec![],
                 p2pool_versions: vec![],
                 xmrig_versions: vec![],
@@ -164,7 +165,7 @@ impl Update {
                 update.spawn_refresh_versions(&binaries, &gupax_settings, &binaries_version)
             {
                 notif(&e.to_string());
-                update.lock().unwrap().msg = format!("Refresh of metadata failed: {e}");
+                update.lock().unwrap().msg = t_f!("Refresh of metadata failed: {}", e);
                 update.lock().unwrap().updating = false;
                 return;
             }
@@ -199,9 +200,9 @@ impl Update {
                     Ok(updated) => {
                         if updated {
                             if !gupax_settings.updates.automatic_restart {
-                                notif(
-                                    "A binary has been updated, you need to restart Gupax to apply the change",
-                                );
+                                notif(t!(
+                                    "A binary has been updated, you need to restart Gupax to apply the change"
+                                ));
                                 *restart.lock().unwrap() = true;
                             } else {
                                 request_restart();
@@ -209,7 +210,7 @@ impl Update {
                         }
                     }
                     Err(e) => {
-                        update.lock().unwrap().msg = format!("Update failed: {:?}", e);
+                        update.lock().unwrap().msg = format!("{} {:?}", t!("Update failed:"), e);
                         notif(&format!("{:?}", e));
                     }
                 }
@@ -305,8 +306,9 @@ impl Update {
                 && v.tag_name != current_version
             {
                 // there is a new version, send a notification
-                notif(&format!(
-                    "New version available for {name}:\n{} published at {}",
+                notif(&t_f!(
+                    "New version available for {}:\n{} published at {}",
+                    name,
                     v.tag_name,
                     v.published_at.date_naive()
                 ));
@@ -331,9 +333,9 @@ impl Update {
                 Ok(updated) => {
                     if updated {
                         if !gupax_settings.updates.automatic_restart {
-                            notif(
-                                "A binary has been updated, you need to restart Gupax to apply the change",
-                            );
+                            notif(t!(
+                                "A binary has been updated, you need to restart Gupax to apply the change"
+                            ));
                             *restart.lock().unwrap() = true;
                         } else {
                             request_restart();
@@ -341,7 +343,7 @@ impl Update {
                     }
                 }
                 Err(e) => {
-                    update.lock().unwrap().msg = format!("Update failed: {:?}", e);
+                    update.lock().unwrap().msg = format!("{} {:?}", t!("Update failed:"), e);
                     notif(&format!("{:?}", e))
                 }
             }
@@ -374,7 +376,7 @@ impl Update {
                 // binary is already at the selected version
                 self.lock().unwrap().prog += part_progress;
                 self.lock().unwrap().msg =
-                    format!("The current version of {name} is already up to date");
+                    t_f!("The current version of {} is already up to date", name);
                 continue;
             }
             // create path only if path is valid and it doesn't exist
@@ -389,11 +391,11 @@ impl Update {
             }
 
             // download selected_version
-            self.lock().unwrap().msg = format!("Downloading {name}");
+            self.lock().unwrap().msg = t_f!("Downloading {}", name);
             let (bytes, extension) =
                 Self::get_binary(&client, name, selected_version, source).await?;
             self.lock().unwrap().prog += part_progress / 2.0;
-            self.lock().unwrap().msg = format!("Extracting {name} binary from the archive");
+            self.lock().unwrap().msg = t_f!("Extracting {} binary from the archive", name);
             // On windows, move current binary if it does exist
             #[cfg(target_os = "windows")]
             {
@@ -462,7 +464,7 @@ impl Update {
                 _ => panic!("unsupported format"),
             };
             self.lock().unwrap().prog += part_progress / 2.0;
-            self.lock().unwrap().msg = format!("Done updating {name}");
+            self.lock().unwrap().msg = t_f!("Done updating {}", name);
             updated = true;
         }
         Ok(updated)

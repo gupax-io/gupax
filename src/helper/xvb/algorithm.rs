@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::utils::i18n::t_f;
 use std::{
     fmt::{Debug, Display},
     sync::{Arc, Mutex},
@@ -139,7 +140,10 @@ impl Algorithm {
         if let Err(e) = distributor.run_decision(gui_api_xvb).await {
             output_console(
                 &mut gui_api_xvb.lock().unwrap().output,
-                &format!("Error while updating the configuration of the hashrate provider: {e}"),
+                &t_f!(
+                    "Error while updating the configuration of the hashrate provider: {}",
+                    e
+                ),
                 ProcessName::Xvb,
             );
         }
@@ -519,9 +523,9 @@ impl Display for XvbMode {
         let text = match self {
             Self::Auto => "Auto".to_string(),
             Self::Hero => "Hero".to_string(),
-            Self::ManualXvb(amount) => format!("Manual Xvb: {amount}HR/s"),
-            Self::ManualP2pool(amount) => format!("Manual P2pool {amount}HR/s"),
-            Self::ManualDonationLevel(round) => format!("Manual Donation Level: {round}"),
+            Self::ManualXvb(amount) => t_f!("Manual Xvb: {}HR/s", amount),
+            Self::ManualP2pool(amount) => t_f!("Manual P2pool {}HR/s", amount),
+            Self::ManualDonationLevel(round) => t_f!("Manual Donation Level: {}", round),
         };
 
         write!(f, "{text}")

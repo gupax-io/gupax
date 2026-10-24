@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::utils::i18n::t;
 use std::sync::{Arc, Mutex};
 
 use egui::{Button, ScrollArea, TextEdit, TextStyle, TextWrapMode, Ui};
@@ -94,7 +95,7 @@ pub fn start_options_field(
     hover: &str,
 ) {
     ui.group(|ui| {
-        ui.label("Start options:");
+        ui.label(t!("Start options:"));
         ui.style_mut().wrap_mode = Some(TextWrapMode::Wrap);
         ui.style_mut().spacing.text_edit_width = ui.available_width();
         ui.add(
@@ -113,7 +114,9 @@ pub fn start_options_field(
                         default_args_simple != arguments,
                         Button::new(" Reset to Simple options "),
                     )
-                    .on_hover_text("Reset the start options to arguments used for simple mode")
+                    .on_hover_text(t!(
+                        "Reset the start options to arguments used for simple mode"
+                    ))
                     .clicked()
                 {
                     *arguments = default_args_simple.to_string();
@@ -122,16 +125,20 @@ pub fn start_options_field(
                 if ui
                     .add_enabled(
                         default_args_advanced != arguments,
-                        Button::new("Reset to Advanced options"),
+                        Button::new(t!("Reset to Advanced options")),
                     )
-                    .on_hover_text("Reset the start options to arguments used for advanced mode")
+                    .on_hover_text(t!(
+                        "Reset the start options to arguments used for advanced mode"
+                    ))
                     .clicked()
                 {
                     *arguments = default_args_advanced.to_string();
                 }
                 if ui
-                    .add_enabled(!arguments.is_empty(), Button::new("Clear"))
-                    .on_hover_text("Clear custom start options to use the advanced settings")
+                    .add_enabled(!arguments.is_empty(), Button::new(t!("Clear")))
+                    .on_hover_text(t!(
+                        "Clear custom start options to use the advanced settings"
+                    ))
                     .clicked()
                 {
                     *arguments = String::new();

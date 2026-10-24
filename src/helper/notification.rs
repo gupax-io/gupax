@@ -1,3 +1,4 @@
+use crate::utils::i18n::{t, t_f};
 use std::sync::{Arc, Mutex};
 
 use crate::{
@@ -86,7 +87,7 @@ impl Helper {
                                         .is_some_and(|s| s == 1)
                                 {
                                     first_share_found = true;
-                                    notif("Gupax just found it's first P2Pool share !");
+                                    notif(t!("Gupax just found it's first P2Pool share !"));
                                 }
                             }
                         }
@@ -99,7 +100,7 @@ impl Helper {
                                     let amount = new_amount_xmr - last_xmr_amount;
                                     last_payouts_count = new_payouts_count;
                                     last_xmr_amount = new_amount_xmr;
-                                    let body = format!("New payout ! Your reward is {amount} xmr");
+                                    let body = t_f!("New payout ! Your reward is {} xmr", amount);
                                     notif(&body);
                                 }
                             }
@@ -112,13 +113,15 @@ impl Helper {
                                 if diff != 0 {
                                     last_connected_miners = new_miners_count;
                                     let body = if diff > 1 {
-                                        &format!(
-                                            "{diff} miners have been disconnected from the Proxy"
+                                        t_f!(
+                                            "{} miners have been disconnected from the Proxy",
+                                            diff
                                         )
                                     } else {
-                                        "A miner has been disconnected from the Proxy"
+                                        t!("A miner has been disconnected from the Proxy")
+                                            .to_string()
                                     };
-                                    notif(body);
+                                    notif(&body);
                                 }
                             }
                         }
@@ -149,63 +152,63 @@ impl Helper {
                             }
 
                             if node_alive && process_node_status == ProcessState::Syncing {
-                                notif(
-                                    "The Monero Node was synced but is now syncing again\nCheck your network",
-                                );
+                                notif(t!(
+                                    "The Monero Node was synced but is now syncing again\nCheck your network"
+                                ));
                                 node_alive = false;
                             }
                             if node_alive && process_node_status == ProcessState::Failed {
-                                notif(
-                                    "The Monero Node is now in a failed state\nCheck your network",
-                                );
+                                notif(t!(
+                                    "The Monero Node is now in a failed state\nCheck your network"
+                                ));
                                 node_alive = false;
                             }
                             if p2pool_alive && process_p2pool_status == ProcessState::Syncing {
-                                notif(
-                                    "The P2Pool node was synced but is now syncing again\nCheck your network",
-                                );
+                                notif(t!(
+                                    "The P2Pool node was synced but is now syncing again\nCheck your network"
+                                ));
                                 p2pool_alive = false;
                             }
                             if p2pool_alive && process_p2pool_status == ProcessState::Failed {
-                                notif(
-                                    "The P2Pool node is now in a failed state\nCheck your network",
-                                );
+                                notif(t!(
+                                    "The P2Pool node is now in a failed state\nCheck your network"
+                                ));
                                 p2pool_alive = false;
                             }
                             if proxy_alive && process_proxy_status == ProcessState::NotMining {
-                                notif(
-                                    "The Proxy was mining correctly but is not anymore\nCheck your network and the connection to the P2Pool node",
-                                );
+                                notif(t!(
+                                    "The Proxy was mining correctly but is not anymore\nCheck your network and the connection to the P2Pool node"
+                                ));
                                 proxy_alive = false;
                             }
                             if proxy_alive && process_proxy_status == ProcessState::Failed {
-                                notif("The Proxy is now in a failed state");
+                                notif(t!("The Proxy is now in a failed state"));
                                 proxy_alive = false;
                             }
                             if xmrig_alive && process_xmrig_status == ProcessState::NotMining {
-                                notif(
-                                    "XMRig was mining correctly but is not anymore\nCheck your network and the connection to the P2Pool node/Proxy",
-                                );
+                                notif(t!(
+                                    "XMRig was mining correctly but is not anymore\nCheck your network and the connection to the P2Pool node/Proxy"
+                                ));
                                 xmrig_alive = false;
                             }
                             if xmrig_alive && process_xmrig_status == ProcessState::Failed {
-                                notif("The XMRig is now in a failed state");
+                                notif(t!("The XMRig is now in a failed state"));
                                 xmrig_alive = false;
                             }
                             if xvb_alive && process_xvb_status == ProcessState::OfflinePoolsAll {
-                                notif(
-                                    "XvB process is disconnected from all XvB Pool.It might be an issue with XvB server and not from Gupax",
-                                );
+                                notif(t!(
+                                    "XvB process is disconnected from all XvB Pool.It might be an issue with XvB server and not from Gupax"
+                                ));
                                 xvb_alive = false;
                             }
                             if xvb_alive && process_xvb_status == ProcessState::Failed {
-                                notif("XvB process is now in a failed state");
+                                notif(t!("XvB process is now in a failed state"));
                                 xvb_alive = false;
                             }
                             if xvb_alive && process_xvb_status == ProcessState::Syncing {
-                                notif(
-                                    "XvB process is stopped while waiting for P2Pool or XMRig or the Proxy",
-                                );
+                                notif(t!(
+                                    "XvB process is stopped while waiting for P2Pool or XMRig or the Proxy"
+                                ));
                                 xvb_alive = false;
                             }
                         }
@@ -221,7 +224,7 @@ pub fn notif(body: &str) {
     // we do not unwrap in case the desktop environment doesn't support notifications
     // We don't need a handle to the notification anyway
     let _ = Notif::new()
-        .summary("Gupax event")
+        .summary(t!("Gupax event"))
         .body(body)
         .icon("gupax")
         .appname("Gupax")

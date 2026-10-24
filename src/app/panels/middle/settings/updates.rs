@@ -1,3 +1,4 @@
+use crate::utils::i18n::t;
 #[cfg(not(feature = "distro"))]
 use egui::{Checkbox, ComboBox, Label, ProgressBar, ScrollArea, Separator, TextStyle};
 #[cfg(not(feature = "distro"))]
@@ -23,7 +24,7 @@ impl App {
         #[cfg(feature = "distro")]
         {
             ui.horizontal_wrapped(|ui|{
-            ui.label(RichText::new("Gupax has been installed by your distribution package manager.\nYou should update it from it.")
+            ui.label(RichText::new(t!("Gupax has been installed by your distribution package manager.\nYou should update it from it."))
                     .color(crate::ORANGE));
                 });
         }
@@ -53,7 +54,7 @@ impl App {
             ui.vertical_centered(|ui| {
                 if let Some(release) = &self.changelog_selected {
                     ui.group(|ui| {
-                        ui.heading("Changelog");
+                        ui.heading(t!("Changelog"));
                         ui.label(
                             RichText::new(format!(
                                 "{}\n{}\n{}",
@@ -69,10 +70,10 @@ impl App {
                     });
                 } else {
                     ui.group(|ui| {
-                        ui.heading("Changelog");
-                        ui.label(
-                            "Click on a refresh button and then on a version to see the changelog",
-                        );
+                        ui.heading(t!("Changelog"));
+                        ui.label(t!(
+                            "Click on a refresh button and then on a version to see the changelog"
+                        ));
                     });
                 }
             });
@@ -104,9 +105,13 @@ impl App {
         if selected < current {
             warn!("Trying to downgrade");
             let msg = if name != "gupax" {
-                "You are trying to downgrade a binary. This is potentially dangerous as it is unsupported."
+                t!(
+                    "You are trying to downgrade a binary. This is potentially dangerous as it is unsupported."
+                )
             } else {
-                "You are trying to downgrade Gupax. This is really dangerous as you could loose the ability to upgrade it and be stuck on the old version. You would need to re-install it manually. You also could loose your saved configuration"
+                t!(
+                    "You are trying to downgrade Gupax. This is really dangerous as you could loose the ability to upgrade it and be stuck on the old version. You would need to re-install it manually. You also could loose your saved configuration"
+                )
             };
 
             self.error_state.set(
@@ -133,7 +138,9 @@ impl App {
                 .contains("BETA")
         {
             warn!("Trying to downgrade");
-            let msg = "You are trying to update to a BETA. Do this only if you want to help test unstable software.";
+            let msg = t!(
+                "You are trying to update to a BETA. Do this only if you want to help test unstable software."
+            );
             self.error_state.set(
                 msg,
                 ErrorFerris::Panic,
@@ -158,7 +165,7 @@ impl App {
         ui.add_space(SPACE * 0.5);
                  let updating = self.update.lock().unwrap().updating;
         ui.add_enabled_ui(!updating, |ui|{
-        if ui.button("Update Everything").on_hover_text("Update all binaries to the latest release").clicked() {
+        if ui.button(t!("Update Everything")).on_hover_text(t!("Update all binaries to the latest release")).clicked() {
             self.update.update_all(
                 BINARIES_NAME.into_iter().map(|s| s.to_string()).collect(),
                 self.state.gupax.clone(),
@@ -169,7 +176,7 @@ impl App {
         });
             });
         ui.add_space(SPACE );
-        ui.checkbox(&mut self.state.gupax.updates.beta, "Beta").on_hover_text("Participate in pre-release. Check only if you want to test release to come before they are stabilized. You will experience bugs.");           
+        ui.checkbox(&mut self.state.gupax.updates.beta, t!("Beta")).on_hover_text(t!("Participate in pre-release. Check only if you want to test release to come before they are stabilized. You will experience bugs."));           
         });
         ui.add_space(SPACE * 0.5);
             });
@@ -183,7 +190,7 @@ impl App {
             ui.heading(name);
             ui.horizontal(|ui| {
                 let version = self.binaries_version.version_by_name(name);
-                ui.label("Currently installed version:    ");
+                ui.label(t!("Currently installed version:    "));
                 ui.label(version);
             });
             ui.horizontal(|ui| {
@@ -201,8 +208,8 @@ impl App {
         let updating = self.update.lock().unwrap().updating;
         ui.add_enabled_ui(!updating, |ui| {
             if ui
-                .button("Refresh")
-                .on_hover_text("Refresh available versions")
+                .button(t!("Refresh"))
+                .on_hover_text(t!("Refresh available versions"))
                 .clicked()
             {
                 self.update.refresh_versions(
@@ -224,8 +231,8 @@ impl App {
             && !self.update.lock().unwrap().updating;
         ui.add_enabled_ui(enable, |ui| {
             if ui
-                .button("Update")
-                .on_hover_text("Update to the selected version")
+                .button(t!("Update"))
+                .on_hover_text(t!("Update to the selected version"))
                 .clicked()
                 && self.warn_downgrade(name)
                 && self.warn_switch_beta(name)
@@ -279,9 +286,9 @@ impl App {
         ui.horizontal(|ui|{
         ui.add_sized(
             [0.0, height_txt_before_button(ui, &TextStyle::Body)],
-            Label::new("repository:     "),
+            Label::new(t!("repository:     ")),
         );
-        ui.text_edit_singleline(repo).on_hover_text("repository from where the binary will be downloaded. Only github compatible API with specific name convention in releases for binaries are supported.\nExample: github.com/gupax-io/gupax");
+        ui.text_edit_singleline(repo).on_hover_text(t!("repository from where the binary will be downloaded. Only github compatible API with specific name convention in releases for binaries are supported.\nExample: github.com/gupax-io/gupax"));
         });
     }
 
@@ -290,23 +297,27 @@ impl App {
         let notification_button = (
             Checkbox::new(
                 &mut self.state.gupax.updates.notification_update,
-                "Notification for new updates",
+                t!("Notification for new updates"),
             ),
-            "Checks for new updates every 24 hours and at each restart.\nDoes not apply them.\nRestart Gupax to apply changes.",
+            t!(
+                "Checks for new updates every 24 hours and at each restart.\nDoes not apply them.\nRestart Gupax to apply changes."
+            ),
         );
         let auto_update_button = (
             Checkbox::new(
                 &mut self.state.gupax.updates.automatic_update,
-                "Automatic updates",
+                t!("Automatic updates"),
             ),
-            "Apply for new updates automatically. It is done every 24h and at each restart\nRestart Gupax to apply changes.",
+            t!(
+                "Apply for new updates automatically. It is done every 24h and at each restart\nRestart Gupax to apply changes."
+            ),
         );
         let auto_restart_button = (
             Checkbox::new(
                 &mut self.state.gupax.updates.automatic_restart,
-                "Automatic restart",
+                t!("Automatic restart"),
             ),
-            "Gupax will be restarted at the end of an update.\nRestart Gupax to apply changes.",
+            t!("Gupax will be restarted at the end of an update.\nRestart Gupax to apply changes."),
         );
         let widgets = vec![notification_button, auto_update_button, auto_restart_button];
         let text_style = TextStyle::Button;

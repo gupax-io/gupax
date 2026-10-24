@@ -26,6 +26,7 @@ use crate::disk::state::State;
 use crate::helper::Helper;
 use crate::utils::constants::*;
 use crate::utils::ferris::*;
+use crate::utils::i18n::{t, t_f, tr_ref};
 use crate::utils::macros::arc_mut;
 use crate::utils::resets::{reset_nodes, reset_state};
 use egui::*;
@@ -90,34 +91,35 @@ impl crate::app::App {
                     ResetState => {
                         ui.add_sized(
                             [width, height],
-                            Label::new(format!(
+                            Label::new(t_f!(
                                 "--- Gupax has encountered an error! ---\n{}",
                                 self.error_state.msg
                             )),
                         );
                         ui.add_sized(
                             [width, height],
-                            Label::new("Reset Gupax state? (Your settings)"),
+                            Label::new(t!("Reset Gupax state? (Your settings)")),
                         )
                     }
                     ResetNode => {
                         ui.add_sized(
                             [width, height],
-                            Label::new(format!(
+                            Label::new(t_f!(
                                 "--- Gupax has encountered an error! ---\n{}",
                                 self.error_state.msg
                             )),
                         );
-                        ui.add_sized([width, height], Label::new("Reset the manual node list?"))
+                        ui.add_sized([width, height], Label::new(t!("Reset the manual node list?")))
                     }
                     ErrorButtons::WindowsAdmin => {
-                        let text = format!(
-                            "Why does XMRig need admin privilege?\n{XMRIG_ADMIN_REASON}"
+                        let text = t_f!(
+                            "Why does XMRig need admin privilege?\n{}",
+                            xmrig_admin_reason()
                         );
                         let height = height / 4.0;
                         ui.add_sized(
                             [width, height],
-                            Label::new(format!(
+                            Label::new(t_f!(
                                 "--- Gupax needs admin privilege for XMRig! ---\n{}",
                                 self.error_state.msg
                             )),
@@ -127,7 +129,7 @@ impl crate::app::App {
                         ui.add_sized(
                             [width, height],
                             Hyperlink::from_label_and_url(
-                                "Click here for more info.",
+                                t!("Click here for more info."),
                                 "https://xmrig.com/docs/miner/randomx-optimization-guide",
                             ),
                         )
@@ -153,20 +155,20 @@ impl crate::app::App {
                         match self.error_state.ferris {
                             Panic => ui.add_sized(
                                 [width, height],
-                                Label::new("--- Gupax has encountered an unrecoverable error! ---"),
+                                Label::new(t!("--- Gupax has encountered an unrecoverable error! ---")),
                             ),
-                            Happy => ui.add_sized([width, height], Label::new("--- Success! ---")),
-                            Cute => ui.add_sized([width, height], Label::new("--- Gupax needs your Attention ! ---")),
+                            Happy => ui.add_sized([width, height], Label::new(t!("--- Success! ---"))),
+                            Cute => ui.add_sized([width, height], Label::new(t!("--- Gupax needs your Attention ! ---"))),
                             _ => ui.add_sized(
                                 [width, height],
-                                Label::new("--- Gupax has encountered an error! ---"),
+                                Label::new(t!("--- Gupax has encountered an error! ---")),
                             ),
                         };
                         let height = height / 2.0;
                         // Show GitHub rant link for Windows admin problems.
                         if cfg!(windows) && self.error_state.buttons == ErrorButtons::WindowsAdmin {
                             ui.add_sized([width, height], Hyperlink::from_label_and_url(
-								"[Why does Gupax need to be Admin? (on Windows)]",
+								t!("[Why does Gupax need to be Admin? (on Windows)]"),
 								"https://github.com/gupax-io/gupax/tree/main/ADMIN.md"
 							));
                             ui.add_sized([width, height], Label::new(&self.error_state.msg))
@@ -180,7 +182,7 @@ impl crate::app::App {
                 match self.error_state.buttons.clone() {
                     UseDetectedLocalNode((rpc, zmq)) => {
                         if ui
-                            .add_sized([width, height / 2.0], Button::new("Use the detected Node"))
+                            .add_sized([width, height / 2.0], Button::new(t!("Use the detected Node")))
                             .clicked()
                         {
                             *self.helper.lock().unwrap().ports_detected_local_node.lock().unwrap() = Some((rpc, zmq));
@@ -193,7 +195,7 @@ impl crate::app::App {
                         // If [Esc] was pressed, assume [No]
                         if key.is_esc()
                             || ui
-                                .add_sized([width, height / 2.0], Button::new("Cancel"))
+                                .add_sized([width, height / 2.0], Button::new(t!("Cancel")))
                                 .clicked()
                         {
                             self.error_state.reset()
@@ -201,7 +203,7 @@ impl crate::app::App {
                     }
                     UseNonSyncedNode => {
                         if ui
-                            .add_sized([width, height / 2.0], Button::new("Use the unsynced Node"))
+                            .add_sized([width, height / 2.0], Button::new(t!("Use the unsynced Node")))
                             .clicked()
                         {
                             self.error_state.reset();
@@ -218,7 +220,7 @@ impl crate::app::App {
                         // If [Esc] was pressed, assume [No]
                         if key.is_esc()
                             || ui
-                                .add_sized([width, height / 2.0], Button::new("Cancel"))
+                                .add_sized([width, height / 2.0], Button::new(t!("Cancel")))
                                 .clicked()
                         {
                             self.error_state.reset()
@@ -228,7 +230,7 @@ impl crate::app::App {
                     // [Esc] cancels the close and asks again at the next close.
                     TrayOnClose => {
                         if ui
-                            .add_sized([width, height / 2.0], Button::new("Yes"))
+                            .add_sized([width, height / 2.0], Button::new(t!("Yes")))
                             .clicked()
                         {
                             self.save_tray_on_close_answer(true);
@@ -236,7 +238,7 @@ impl crate::app::App {
                             self.hide_to_tray(ui.ctx(), true);
                         }
                         if ui
-                            .add_sized([width, height / 2.0], Button::new("No"))
+                            .add_sized([width, height / 2.0], Button::new(t!("No")))
                             .clicked()
                         {
                             self.save_tray_on_close_answer(false);
@@ -255,13 +257,13 @@ impl crate::app::App {
                         // If [Esc] was pressed, assume [Stay]
                         if key.is_esc()
                             || ui
-                                .add_sized([width, height / 2.0], Button::new("Stay"))
+                                .add_sized([width, height / 2.0], Button::new(t!("Stay")))
                                 .clicked()
                         {
                             self.error_state.reset();
                         }
                         if ui
-                            .add_sized([width, height / 2.0], Button::new("Quit"))
+                            .add_sized([width, height / 2.0], Button::new(t!("Quit")))
                             .clicked()
                         {
                             self.request_quit();
@@ -272,7 +274,7 @@ impl crate::app::App {
                     // [Yes/No] buttons
                     ResetState => {
                         if ui
-                            .add_sized([width, height / 2.0], Button::new("Yes"))
+                            .add_sized([width, height / 2.0], Button::new(t!("Yes")))
                             .clicked()
                         {
                             match reset_state(&self.state_path) {
@@ -281,19 +283,19 @@ impl crate::app::App {
                                         self.state = s;
                                         self.og = arc_mut!(self.state.clone());
                                         self.error_state.set(
-                                            "State read OK",
+                                            t!("State read OK"),
                                             ErrorFerris::Happy,
                                             ErrorButtons::Okay,
                                         );
                                     }
                                     Err(e) => self.error_state.set(
-                                        format!("State read fail: {e}"),
+                                        t_f!("State read fail: {}", e),
                                         ErrorFerris::Panic,
                                         ErrorButtons::Quit,
                                     ),
                                 },
                                 Err(e) => self.error_state.set(
-                                    format!("State reset fail: {e}"),
+                                    t_f!("State reset fail: {}", e),
                                     ErrorFerris::Panic,
                                     ErrorButtons::Quit,
                                 ),
@@ -301,7 +303,7 @@ impl crate::app::App {
                         }
                         if key.is_esc()
                             || ui
-                                .add_sized([width, height / 2.0], Button::new("No"))
+                                .add_sized([width, height / 2.0], Button::new(t!("No")))
                                 .clicked()
                         {
                             self.error_state.reset()
@@ -309,7 +311,7 @@ impl crate::app::App {
                     }
                     ResetNode => {
                         if ui
-                            .add_sized([width, height / 2.0], Button::new("Yes"))
+                            .add_sized([width, height / 2.0], Button::new(t!("Yes")))
                             .clicked()
                         {
                             match reset_nodes(&self.node_path) {
@@ -318,19 +320,19 @@ impl crate::app::App {
                                         self.node_vec = s;
                                         self.og_node_vec.clone_from(&self.node_vec);
                                         self.error_state.set(
-                                            "Node read OK",
+                                            t!("Node read OK"),
                                             ErrorFerris::Happy,
                                             ErrorButtons::Okay,
                                         );
                                     }
                                     Err(e) => self.error_state.set(
-                                        format!("Node read fail: {e}"),
+                                        t_f!("Node read fail: {}", e),
                                         ErrorFerris::Panic,
                                         ErrorButtons::Quit,
                                     ),
                                 },
                                 Err(e) => self.error_state.set(
-                                    format!("Node reset fail: {e}"),
+                                    t_f!("Node reset fail: {}", e),
                                     ErrorFerris::Panic,
                                     ErrorButtons::Quit,
                                 ),
@@ -338,7 +340,7 @@ impl crate::app::App {
                         }
                         if key.is_esc()
                             || ui
-                                .add_sized([width, height / 2.0], Button::new("No"))
+                                .add_sized([width, height / 2.0], Button::new(t!("No")))
                                 .clicked()
                         {
                             self.error_state.reset()
@@ -346,7 +348,7 @@ impl crate::app::App {
                     }
                     crate::app::ErrorButtons::Okay | crate::app::ErrorButtons::WindowsAdmin => {
                         if key.is_esc()
-                            || ui.add_sized([width, height], Button::new("Okay")).clicked()
+                            || ui.add_sized([width, height], Button::new(t!("Okay"))).clicked()
                         {
                             self.error_state.reset();
                         }
@@ -357,14 +359,14 @@ impl crate::app::App {
                         }
                     }
                     Quit => {
-                        if ui.add_sized([width, height], Button::new("Quit")).clicked() {
+                        if ui.add_sized([width, height], Button::new(t!("Quit"))).clicked() {
                             // Nothing is saved: the files the error is about stay unchanged.
                             crate::tray::request(crate::tray::TrayCmd::Exit(1));
                         }
                     }
                     WarnUpdate(data) => {
                         if ui
-                            .add_sized([width, height / 2.0], Button::new(data.yes_button.clone()))
+                            .add_sized([width, height / 2.0], Button::new(tr_ref(&data.yes_button)))
                             .clicked()
                         {
     #[cfg(not(feature = "distro"))]
@@ -403,7 +405,7 @@ impl crate::app::App {
                             self.error_state.reset();
                         } else if key.is_esc()
                             || ui
-                                .add_sized([width, height / 2.0], Button::new(data.no_button.clone()))
+                                .add_sized([width, height / 2.0], Button::new(tr_ref(&data.no_button)))
                                 .clicked()
                         {
     #[cfg(not(feature = "distro"))]

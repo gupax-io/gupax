@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::utils::i18n::t_f;
 use std::{
     net::{SocketAddr, ToSocketAddrs},
     sync::{Arc, Mutex},
@@ -202,7 +203,7 @@ impl Pool {
             } else {
                 output_console(
                     &mut gui_api_xvb.lock().unwrap().output,
-                    &format!("XvB Pool ping, {chosen_pool} is selected as the fastest."),
+                    &t_f!("XvB Pool ping, {} is selected as the fastest.", chosen_pool),
                     ProcessName::Xvb,
                 );
             }

@@ -19,6 +19,7 @@ use crate::app::panels::middle::common::list_poolnode::{PoolNode, list_poolnode}
 use crate::app::panels::middle::common::state_edit_field::{StateTextEdit, slider_state_field};
 use crate::disk::state::P2poolChain;
 use crate::miscs::height_txt_before_button;
+use crate::utils::i18n::t;
 use crate::{disk::state::P2pool, utils::regex::REGEXES};
 
 use crate::constants::*;
@@ -85,7 +86,7 @@ impl P2pool {
                                             "P2Pool Main",
                                         ),
                                     )
-                                    .on_hover_text(P2POOL_MAIN)
+                                    .on_hover_text(p2pool_main())
                                     .clicked()
                                 {
                                     self.chain = P2poolChain::Main;
@@ -98,7 +99,7 @@ impl P2pool {
                                             "P2Pool Mini",
                                         ),
                                     )
-                                    .on_hover_text(P2POOL_MINI)
+                                    .on_hover_text(p2pool_mini())
                                     .clicked()
                                 {
                                     self.chain = P2poolChain::Mini;
@@ -111,7 +112,7 @@ impl P2pool {
                                             "P2Pool Nano",
                                         ),
                                     )
-                                    .on_hover_text(P2POOL_NANO)
+                                    .on_hover_text(p2pool_nano())
                                     .clicked()
                                 {
                                     self.chain = P2poolChain::Nano;
@@ -122,9 +123,9 @@ impl P2pool {
                                 // [Backup host]
                                 ui.add_sized(
                                     [(ui.available_width() / 2.0) - (SPACE * 2.0), height],
-                                    Checkbox::new(&mut self.backup_host, "Backup host"),
+                                    Checkbox::new(&mut self.backup_host, t!("Backup host")),
                                 )
-                                .on_hover_text(P2POOL_BACKUP_HOST_ADVANCED);
+                                .on_hover_text(p2pool_backup_host_advanced());
                             });
                         });
                     });
@@ -134,24 +135,24 @@ impl P2pool {
                             ui.add_space(SPACE);
                             slider_state_field(
                                 ui,
-                                "Out peers [2-450]:",
-                                P2POOL_OUT,
+                                t!("Out peers [2-450]:"),
+                                p2pool_out(),
                                 &mut self.out_peers,
                                 2..=450,
                             );
                             ui.add_space(SPACE);
                             slider_state_field(
                                 ui,
-                                "In peers  [2-450]:",
-                                P2POOL_IN,
+                                t!("In peers  [2-450]:"),
+                                p2pool_in(),
                                 &mut self.in_peers,
                                 2..=450,
                             );
                             ui.add_space(SPACE);
                             slider_state_field(
                                 ui,
-                                "Log level [ 0-6 ]:",
-                                P2POOL_LOG,
+                                t!("Log level [ 0-6 ]:"),
+                                p2pool_log(),
                                 &mut self.log_level,
                                 0..=6,
                             );
@@ -164,7 +165,7 @@ impl P2pool {
         StateTextEdit::new(ui)
             .description("   Name     ")
             .max_ch(30)
-            .help_msg(P2POOL_NAME)
+            .help_msg(p2pool_name())
             .validations(&[|x| REGEXES.name.is_match(x)])
             .build(ui, &mut self.name)
     }
@@ -172,7 +173,7 @@ impl P2pool {
         StateTextEdit::new(ui)
             .description("   RPC PORT ")
             .max_ch(5)
-            .help_msg(P2POOL_RPC_PORT)
+            .help_msg(p2pool_rpc_port())
             .validations(&[|x| REGEXES.port.is_match(x)])
             .build(ui, &mut self.rpc)
     }
@@ -180,7 +181,7 @@ impl P2pool {
         StateTextEdit::new(ui)
             .description("   ZMQ PORT ")
             .max_ch(5)
-            .help_msg(P2POOL_ZMQ_PORT)
+            .help_msg(p2pool_zmq_port())
             .validations(&[|x| REGEXES.port.is_match(x)])
             .build(ui, &mut self.zmq)
     }
@@ -188,7 +189,7 @@ impl P2pool {
         StateTextEdit::new(ui)
             .description("   IP       ")
             .max_ch(255)
-            .help_msg(P2POOL_NODE_IP)
+            .help_msg(p2pool_node_ip())
             .validations(&[|x| REGEXES.ipv4.is_match(x), |x| REGEXES.domain.is_match(x)])
             .build(ui, &mut self.ip)
     }
@@ -197,9 +198,9 @@ impl P2pool {
     fn stratum_port_field(&mut self, ui: &mut Ui) -> bool {
         let mut port = self.stratum_port.to_string();
         let valid = StateTextEdit::new(ui)
-            .description("STRATUM PORT")
+            .description(t!("STRATUM PORT"))
             .max_ch(5)
-            .help_msg(HELP_STRATUM_PORT)
+            .help_msg(help_stratum_port())
             .validations(&[|x| REGEXES.port.is_match(x)])
             .build(ui, &mut port);
         if let Ok(port) = port.parse() {

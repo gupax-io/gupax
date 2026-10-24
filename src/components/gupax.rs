@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::utils::i18n::{t, t_f};
 use crate::{disk::state::*, utils::macros::arc_mut};
 use log::*;
 use serde::{Deserialize, Serialize};
@@ -112,10 +113,10 @@ impl Gupax {
         thread::spawn(move || {
             let path = match file_type {
                 NodeDB => rfd::FileDialog::new()
-                    .set_title("Select a directory for the DB of your Node")
+                    .set_title(t!("Select a directory for the DB of your Node"))
                     .pick_folder(),
                 _ => rfd::FileDialog::new()
-                    .set_title(format!("Select {name} Binary for Gupax"))
+                    .set_title(t_f!("Select {} Binary for Gupax", name))
                     .pick_file(),
             };
             if let Some(path) = path {

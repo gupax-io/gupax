@@ -1,3 +1,4 @@
+use crate::utils::i18n::t;
 use egui::{Button, Label, RichText, ScrollArea, Slider, TextStyle, Vec2};
 use log::debug;
 use strum::{EnumCount, IntoEnumIterator};
@@ -15,8 +16,8 @@ use crate::{
     miscs::height_txt_before_button,
     utils::constants::{
         APP_MAX_HEIGHT, APP_MAX_SCALE, APP_MAX_WIDTH, APP_MIN_HEIGHT, APP_MIN_SCALE, APP_MIN_WIDTH,
-        GUPAX_ADJUST, GUPAX_HEIGHT, GUPAX_LOCK_HEIGHT, GUPAX_LOCK_WIDTH, GUPAX_NO_LOCK,
-        GUPAX_RENDERER, GUPAX_SCALE, GUPAX_SET, GUPAX_TAB, GUPAX_WIDTH, LIGHT_GRAY, SPACE,
+        LIGHT_GRAY, SPACE, gupax_adjust, gupax_height, gupax_lock_height, gupax_lock_width,
+        gupax_no_lock, gupax_renderer, gupax_scale, gupax_set, gupax_tab, gupax_width,
     },
 };
 
@@ -31,11 +32,11 @@ impl App {
                 ui.push_id(2, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.add(Label::new(
-                            RichText::new("Node/P2Pool/XMRig/XMRig-Proxy PATHs")
+                            RichText::new(t!("Node/P2Pool/XMRig/XMRig-Proxy PATHs"))
                                 .underline()
                                 .color(LIGHT_GRAY),
                         ))
-                        .on_hover_text("Gupax is online");
+                        .on_hover_text(t!("Gupax is online"));
                     });
                     ui.separator();
                     ScrollArea::horizontal().show(ui, |ui| {
@@ -79,9 +80,11 @@ impl App {
             ui.group(|ui| {
                 ui.vertical_centered(|ui| {
                     ui.add(Label::new(
-                        RichText::new("Default Tab").underline().color(LIGHT_GRAY),
+                        RichText::new(t!("Default Tab"))
+                            .underline()
+                            .color(LIGHT_GRAY),
                     ))
-                    .on_hover_text(GUPAX_TAB);
+                    .on_hover_text(gupax_tab());
                 });
                 ui.separator();
                 ui.push_id(1, |ui| {
@@ -121,11 +124,11 @@ impl App {
             ui.group(|ui| {
                 ui.vertical_centered(|ui| {
                     ui.add(Label::new(
-                        RichText::new("Width/Height/Scaling Adjustment")
+                        RichText::new(t!("Width/Height/Scaling Adjustment"))
                             .underline()
                             .color(LIGHT_GRAY),
                     ))
-                    .on_hover_text(GUPAX_ADJUST);
+                    .on_hover_text(gupax_adjust());
                     ui.separator();
                 });
                 ui.horizontal(|ui| {
@@ -155,7 +158,7 @@ impl App {
                                 slider_state_field(
                                     ui,
                                     &description,
-                                    GUPAX_WIDTH,
+                                    gupax_width(),
                                     &mut self.state.gupax.selected_width,
                                     APP_MIN_WIDTH as u16..=APP_MAX_WIDTH as u16,
                                 );
@@ -168,7 +171,7 @@ impl App {
                                 slider_state_field(
                                     ui,
                                     &description,
-                                    GUPAX_HEIGHT,
+                                    gupax_height(),
                                     &mut self.state.gupax.selected_height,
                                     APP_MIN_HEIGHT as u16..=APP_MAX_HEIGHT as u16,
                                 );
@@ -193,7 +196,7 @@ impl App {
                                     )
                                     .step_by(0.1),
                                 )
-                                .on_hover_text(GUPAX_SCALE);
+                                .on_hover_text(gupax_scale());
                             });
                         });
                         ui.style_mut().override_text_style = Some(egui::TextStyle::Button);
@@ -205,9 +208,9 @@ impl App {
                                 if ui
                                     .selectable_label(
                                         self.state.gupax.ratio == Width,
-                                        "Lock to width",
+                                        t!("Lock to width"),
                                     )
-                                    .on_hover_text(GUPAX_LOCK_WIDTH)
+                                    .on_hover_text(gupax_lock_width())
                                     .clicked()
                                 {
                                     self.state.gupax.ratio = Width;
@@ -216,23 +219,23 @@ impl App {
                                 if ui
                                     .selectable_label(
                                         self.state.gupax.ratio == Height,
-                                        "Lock to height",
+                                        t!("Lock to height"),
                                     )
-                                    .on_hover_text(GUPAX_LOCK_HEIGHT)
+                                    .on_hover_text(gupax_lock_height())
                                     .clicked()
                                 {
                                     self.state.gupax.ratio = Height;
                                 }
                                 ui.separator();
                                 if ui
-                                    .selectable_label(self.state.gupax.ratio == None, "No lock")
-                                    .on_hover_text(GUPAX_NO_LOCK)
+                                    .selectable_label(self.state.gupax.ratio == None, t!("No lock"))
+                                    .on_hover_text(gupax_no_lock())
                                     .clicked()
                                 {
                                     self.state.gupax.ratio = None;
                                 }
                                 ui.separator();
-                                if ui.button("Set").on_hover_text(GUPAX_SET).clicked() {
+                                if ui.button("Set").on_hover_text(gupax_set()).clicked() {
                                     let size = Vec2::new(
                                         self.state.gupax.selected_width as f32,
                                         self.state.gupax.selected_height as f32,
@@ -256,11 +259,11 @@ impl App {
                                 .underline()
                                 .color(LIGHT_GRAY),
                         ))
-                        .on_hover_text(GUPAX_RENDERER);
+                        .on_hover_text(gupax_renderer());
                     ui.separator();
                     if toggle_ui_compact(&mut self.state.gupax.renderer_use_glow, ui)
                         .labelled_by(label.id)
-                        .on_hover_text("Disabled: WGPU\nEnabled: GLOW")
+                        .on_hover_text(t!("Disabled: WGPU\nEnabled: GLOW"))
                         .clicked()
                     {
                         *self.restart.lock().unwrap() = true
@@ -271,9 +274,11 @@ impl App {
             ui.group(|ui| {
                 ui.vertical_centered(|ui| {
                     ui.add(Label::new(
-                        RichText::new("Notifications").underline().color(LIGHT_GRAY),
+                        RichText::new(t!("Notifications"))
+                            .underline()
+                            .color(LIGHT_GRAY),
                     ))
-                    .on_hover_text(GUPAX_ADJUST);
+                    .on_hover_text(gupax_adjust());
                     ui.separator();
                     self.horizontal_flex_notifications(ui, Notification::iter().collect());
                 });

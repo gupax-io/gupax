@@ -305,58 +305,58 @@ impl ProcessName {
             ProcessName::Xvb => "",
         }
     }
-    pub const fn msg_binary_path_empty(&self) -> &str {
+    pub fn msg_binary_path_empty(&self) -> &str {
         match self {
-            ProcessName::Node => NODE_PATH_EMPTY,
-            ProcessName::P2pool => P2POOL_PATH_EMPTY,
-            ProcessName::Xmrig => XMRIG_PATH_EMPTY,
-            ProcessName::XmrigProxy => XMRIG_PROXY_PATH_EMPTY,
+            ProcessName::Node => node_path_empty(),
+            ProcessName::P2pool => p2pool_path_empty(),
+            ProcessName::Xmrig => xmrig_path_empty(),
+            ProcessName::XmrigProxy => xmrig_proxy_path_empty(),
             ProcessName::Xvb => "",
         }
     }
-    pub const fn msg_binary_path_not_file(&self) -> &str {
+    pub fn msg_binary_path_not_file(&self) -> &str {
         match self {
-            ProcessName::Node => NODE_PATH_NOT_FILE,
-            ProcessName::P2pool => P2POOL_PATH_NOT_FILE,
-            ProcessName::Xmrig => XMRIG_PATH_NOT_FILE,
-            ProcessName::XmrigProxy => XMRIG_PROXY_PATH_NOT_FILE,
+            ProcessName::Node => node_path_not_file(),
+            ProcessName::P2pool => p2pool_path_not_file(),
+            ProcessName::Xmrig => xmrig_path_not_file(),
+            ProcessName::XmrigProxy => xmrig_proxy_path_not_file(),
             ProcessName::Xvb => "",
         }
     }
-    pub const fn msg_binary_path_invalid(&self) -> &str {
+    pub fn msg_binary_path_invalid(&self) -> &str {
         match self {
-            ProcessName::Node => NODE_PATH_NOT_VALID,
-            ProcessName::P2pool => P2POOL_PATH_NOT_VALID,
-            ProcessName::Xmrig => XMRIG_PATH_NOT_VALID,
-            ProcessName::XmrigProxy => XMRIG_PROXY_PATH_NOT_VALID,
+            ProcessName::Node => node_path_not_valid(),
+            ProcessName::P2pool => p2pool_path_not_valid(),
+            ProcessName::Xmrig => xmrig_path_not_valid(),
+            ProcessName::XmrigProxy => xmrig_proxy_path_not_valid(),
             ProcessName::Xvb => "",
         }
     }
-    pub const fn msg_binary_path_ok(&self) -> &str {
+    pub fn msg_binary_path_ok(&self) -> &str {
         match self {
-            ProcessName::Node => NODE_PATH_OK,
-            ProcessName::P2pool => P2POOL_PATH_OK,
-            ProcessName::Xmrig => XMRIG_PATH_OK,
-            ProcessName::XmrigProxy => XMRIG_PROXY_PATH_OK,
+            ProcessName::Node => node_path_ok(),
+            ProcessName::P2pool => p2pool_path_ok(),
+            ProcessName::Xmrig => xmrig_path_ok(),
+            ProcessName::XmrigProxy => xmrig_proxy_path_ok(),
             ProcessName::Xvb => "",
         }
     }
-    pub const fn msg_path_edit(&self) -> &str {
+    pub fn msg_path_edit(&self) -> &str {
         match self {
-            ProcessName::Node => GUPAX_PATH_NODE,
-            ProcessName::P2pool => GUPAX_PATH_P2POOL,
-            ProcessName::Xmrig => GUPAX_PATH_XMRIG,
-            ProcessName::XmrigProxy => GUPAX_PATH_XMRIG_PROXY,
+            ProcessName::Node => gupax_path_node(),
+            ProcessName::P2pool => gupax_path_p2pool(),
+            ProcessName::Xmrig => gupax_path_xmrig(),
+            ProcessName::XmrigProxy => gupax_path_xmrig_proxy(),
             ProcessName::Xvb => "",
         }
     }
-    pub const fn msg_auto_help(&self) -> &str {
+    pub fn msg_auto_help(&self) -> &str {
         match self {
-            ProcessName::Node => GUPAX_AUTO_NODE,
-            ProcessName::P2pool => GUPAX_AUTO_P2POOL,
-            ProcessName::Xmrig => GUPAX_AUTO_XMRIG,
-            ProcessName::XmrigProxy => GUPAX_AUTO_XMRIG_PROXY,
-            ProcessName::Xvb => GUPAX_AUTO_XVB,
+            ProcessName::Node => gupax_auto_node(),
+            ProcessName::P2pool => gupax_auto_p2pool(),
+            ProcessName::Xmrig => gupax_auto_xmrig(),
+            ProcessName::XmrigProxy => gupax_auto_xmrig_proxy(),
+            ProcessName::Xvb => gupax_auto_xvb(),
         }
     }
     pub const fn file_type(&self) -> Option<FileType> {
@@ -368,7 +368,7 @@ impl ProcessName {
             ProcessName::Xvb => None,
         }
     }
-    pub const fn start_options_hint(&self) -> &str {
+    pub fn start_options_hint(&self) -> &str {
         match self {
             ProcessName::Node => NODE_START_OPTIONS_HINT,
             ProcessName::P2pool => P2POOL_START_OPTIONS_HINT,

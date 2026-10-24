@@ -27,6 +27,7 @@ use crate::helper::xrig::xmrig::PubXmrigApi;
 use crate::helper::{Process, ProcessName};
 use crate::miscs::height_txt_before_button;
 use crate::regex::REGEXES;
+use crate::utils::i18n::{t, t_f};
 use egui::{Checkbox, Image, Ui, vec2};
 use log::*;
 
@@ -52,7 +53,7 @@ impl Xmrig {
             ui,
             logo,
             &[("XMRig", XMRIG_URL, "")],
-            Some("High performant miner for RandomX"),
+            Some(t!("High performant miner for RandomX")),
             true,
         );
         debug!("XMRig Tab | Rendering [Console]");
@@ -67,7 +68,7 @@ impl Xmrig {
                         buffer,
                         process,
                         r#"Commands: [h]ashrate, [p]ause, [r]esume, re[s]ults, [c]onnection"#,
-                        XMRIG_INPUT,
+                        xmrig_input(),
                     );
                 }
             });
@@ -83,11 +84,11 @@ impl Xmrig {
                     &default_args_simple,
                     &default_args_advanced,
                     Self::process_name().start_options_hint(),
-                    START_OPTIONS_HOVER,
+                    start_options_hover(),
                 );
                 ui.add_enabled_ui(self.arguments.is_empty(), |ui| {
                     debug!("XMRig Tab | Rendering [Address]");
-                    monero_address_field(&mut self.address, ui, XMRIG_ADDRESS);
+                    monero_address_field(&mut self.address, ui, xmrig_address());
                 });
             }
             if self.simple {
@@ -98,16 +99,16 @@ impl Xmrig {
                 ui.set_max_width(ui.available_width() * 0.75);
                 slider_state_field(
                     ui,
-                    &format!("Threads [1-{}]:", self.max_threads),
-                    XMRIG_THREADS,
+                    &t_f!("Threads [1-{}]:", self.max_threads),
+                    xmrig_threads(),
                     &mut self.current_threads,
                     1..=self.max_threads,
                 );
                 #[cfg(not(target_os = "linux"))] // Pause on active isn't supported on Linux
                 slider_state_field(
                     ui,
-                    "Pause on active [0-255]:",
-                    &format!("{} [{}] seconds.", XMRIG_PAUSE, self.pause),
+                    t!("Pause on active [0-255]:"),
+                    &t_f!("{} [{}] seconds.", xmrig_pause(), self.pause),
                     &mut self.pause,
                     0..=255,
                 );
@@ -175,15 +176,15 @@ impl Xmrig {
                                         let size = vec2(width, height);
                                         ui.add_sized(
                                             size,
-                                            Checkbox::new(&mut self.tls, "TLS Connection"),
+                                            Checkbox::new(&mut self.tls, t!("TLS Connection")),
                                         )
-                                        .on_hover_text(XMRIG_TLS);
+                                        .on_hover_text(xmrig_tls());
                                         ui.separator();
                                         ui.add_sized(
                                             size,
-                                            Checkbox::new(&mut self.keepalive, "Keepalive"),
+                                            Checkbox::new(&mut self.keepalive, t!("Keepalive")),
                                         )
-                                        .on_hover_text(XMRIG_KEEPALIVE);
+                                        .on_hover_text(xmrig_keepalive());
                                     });
                                 });
                             });
@@ -196,7 +197,7 @@ impl Xmrig {
         StateTextEdit::new(ui)
             .description(" Name      ")
             .max_ch(30)
-            .help_msg(XMRIG_NAME)
+            .help_msg(xmrig_name())
             .validations(&[|x| REGEXES.name.is_match(x)])
             .build(ui, &mut self.name)
     }
@@ -204,7 +205,7 @@ impl Xmrig {
         StateTextEdit::new(ui)
             .description(" RPC PORT  ")
             .max_ch(5)
-            .help_msg(XMRIG_PORT)
+            .help_msg(xmrig_port())
             .validations(&[|x| REGEXES.port.is_match(x)])
             .build(ui, &mut self.port)
     }
@@ -212,7 +213,7 @@ impl Xmrig {
         StateTextEdit::new(ui)
             .description(" IP        ")
             .max_ch(255)
-            .help_msg(XMRIG_IP)
+            .help_msg(xmrig_ip())
             .validations(&[|x| REGEXES.ipv4.is_match(x) || REGEXES.domain.is_match(x)])
             .build(ui, &mut self.ip)
     }
@@ -220,14 +221,14 @@ impl Xmrig {
         StateTextEdit::new(ui)
             .description(" RIG ID    ")
             .max_ch(30)
-            .help_msg(XMRIG_RIG)
+            .help_msg(xmrig_rig())
             .build(ui, &mut self.rig)
     }
     fn api_ip_field(&mut self, ui: &mut Ui) -> bool {
         StateTextEdit::new(ui)
             .description(" API IP    ")
             .max_ch(255)
-            .help_msg(XMRIG_API_IP)
+            .help_msg(xmrig_api_ip())
             .validations(&[|x| REGEXES.ipv4.is_match(x) || REGEXES.domain.is_match(x)])
             .build(ui, &mut self.api_ip)
     }
@@ -235,7 +236,7 @@ impl Xmrig {
         StateTextEdit::new(ui)
             .description(" API PORT  ")
             .max_ch(5)
-            .help_msg(XMRIG_API_PORT)
+            .help_msg(xmrig_api_port())
             .validations(&[|x| REGEXES.port.is_match(x)])
             .build(ui, &mut self.api_port)
     }
@@ -243,7 +244,7 @@ impl Xmrig {
         StateTextEdit::new(ui)
             .description(" API TOKEN ")
             .max_ch(255)
-            .help_msg(XMRIG_API_TOKEN)
+            .help_msg(xmrig_api_token())
             .build(ui, &mut self.token)
     }
 }
