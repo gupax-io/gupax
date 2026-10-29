@@ -319,6 +319,7 @@ impl Helper {
                         &mut process.lock().unwrap(),
                         &start,
                         &mut gui_api.lock().unwrap().output,
+                        &mut pub_api.lock().unwrap().output,
                     ),
                     None => check_died_process(
                         &mut process.lock().unwrap(),

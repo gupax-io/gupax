@@ -466,6 +466,7 @@ impl Helper {
                     &mut process.lock().unwrap(),
                     &start,
                     &mut gui_api.lock().unwrap().output,
+                    &mut pub_api.lock().unwrap().output,
                 ) {
                     break;
                 }
@@ -475,6 +476,7 @@ impl Helper {
                     &mut process.lock().unwrap(),
                     &start,
                     &mut gui_api.lock().unwrap().output,
+                    &mut pub_api.lock().unwrap().output,
                 ) {
                     break;
                 }
@@ -775,9 +777,8 @@ fn check_died_windows(
     process: &mut Process,
     start: &Instant,
     gui_api_output_raw: &mut String,
+    pub_api_output: &mut String,
 ) -> bool {
-    use crate::utils::constants::HORI_CONSOLE;
-    use readable::up::Uptime;
     // Check if the process secretly died without us knowing :)
 
     let exit_success = if process_pty.lock().unwrap().is_alive() {
@@ -789,40 +790,7 @@ fn check_died_windows(
     };
 
     if let Some(status) = exit_success {
-        debug!(
-            "{} Watchdog | Process secretly died on us! Getting exit status...",
-            process.name
-        );
-        let exit_status = match status {
-            true => {
-                process.state = ProcessState::Dead;
-                "Successful"
-            }
-            false => {
-                process.state = ProcessState::Failed;
-                "Failed"
-            }
-        };
-        let uptime = Uptime::from(start.elapsed());
-        info!(
-            "{} | Stopped ... Uptime was: [{}], Exit status: [{}]",
-            process.name, uptime, exit_status
-        );
-        if let Err(e) = writeln!(
-            *gui_api_output_raw,
-            "{}\n{} stopped | Uptime: [{}] | Exit status: [{}]\n{}\n\n\n\n",
-            process.name, HORI_CONSOLE, uptime, exit_status, HORI_CONSOLE
-        ) {
-            error!(
-                "{} Watchdog | GUI Uptime/Exit status write failed: {}",
-                process.name, e
-            );
-        }
-        process.signal = ProcessSignal::None;
-        debug!(
-            "{} Watchdog | Secret dead process reap OK, breaking",
-            process.name
-        );
+        crate::helper::show_exit(process, start, status, gui_api_output_raw, pub_api_output);
         return true;
     }
     false

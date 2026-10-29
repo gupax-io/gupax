@@ -642,4 +642,45 @@ Uptime         = 0h 2m 4s
             args(&["--mini"])
         );
     }
+
+    #[test]
+    fn last_lines_of_a_process_come_before_its_exit_status() {
+        use crate::helper::check_died;
+        use std::path::PathBuf;
+        use std::process::Command;
+        use std::sync::{Arc, Mutex};
+        use std::time::Instant;
+        let mut child = if cfg!(windows) {
+            Command::new(r"C:\windows\system32\cmd.exe")
+                .args(["/C", "exit 0"])
+                .spawn()
+        } else {
+            Command::new("true").spawn()
+        }
+        .unwrap();
+        child.wait().unwrap();
+        let mut process = Process::new(ProcessName::P2pool, String::new(), PathBuf::new());
+        process.state = ProcessState::Alive;
+        *process.output_pub.lock().unwrap() = "read\n".to_string();
+        let mut gui_output = "start\n".to_string();
+        let mut pub_output = "combined\n".to_string();
+        assert!(check_died(
+            &Arc::new(Mutex::new(child)),
+            &mut process,
+            &Instant::now(),
+            &mut gui_output,
+            &mut pub_output,
+        ));
+        assert!(
+            gui_output.starts_with("start\ncombined\nread\n"),
+            "{gui_output}"
+        );
+        assert!(
+            gui_output.contains("Exit status: [Successful]"),
+            "{gui_output}"
+        );
+        assert!(pub_output.is_empty());
+        assert!(process.output_pub.lock().unwrap().is_empty());
+        assert_eq!(process.state, ProcessState::Dead);
+    }
 }

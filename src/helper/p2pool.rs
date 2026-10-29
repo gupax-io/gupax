@@ -753,6 +753,7 @@ impl Helper {
                     &mut process.lock().unwrap(),
                     &start,
                     &mut gui_api.lock().unwrap().output,
+                    &mut pub_api.lock().unwrap().output,
                 ) {
                     break;
                 }

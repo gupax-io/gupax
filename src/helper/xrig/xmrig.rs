@@ -2,7 +2,7 @@ use crate::constants::*;
 use crate::disk::state::{P2pool, StartOptionsMode, XmrigProxy};
 use crate::helper::p2pool::ImgP2pool;
 use crate::helper::xrig::HashrateProvider;
-use crate::helper::{Helper, ProcessName, ProcessSignal, ProcessState, check_died};
+use crate::helper::{Helper, ProcessName, ProcessSignal, ProcessState, show_exit};
 use crate::helper::{Pool, PubXvbApi};
 use crate::helper::{Process, check_user_input, sleep, sleep_end_loop};
 use crate::human::HumanTime;
@@ -18,13 +18,17 @@ use reqwest::header::AUTHORIZATION;
 use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
-use std::io::{BufRead, BufReader, Write as IoWrite};
+use std::io::{BufRead, BufReader, Read, Write as IoWrite};
 #[cfg(target_os = "linux")]
 use std::io::{PipeReader, PipeWriter};
 use std::path::Path;
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::*,
 };
@@ -539,6 +543,8 @@ impl Helper {
                     let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
                     let mut cmd = Self::create_xmrig_cmd_unix(args, path, stdin_reader, stdout_writer);
             let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+            // Its stdout writer would keep the pipe open after XMRig exited.
+            drop(cmd);
                     let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
                     let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_reader);
 
@@ -569,6 +575,7 @@ impl Helper {
                     let stdout: Box<dyn std::io::Read + Send> = Box::new(std::fs::File::open(&output_path).unwrap());
 
             }        }
+        let (stdout, output_end) = output(stdout);
 
         debug!("XMRig | Clearing GUI output...");
         gui_api.lock().unwrap().output.clear();
@@ -623,16 +630,25 @@ impl Helper {
             debug!("XMRig Watchdog | ----------- Start of loop -----------");
 
             // Check if the process secretly died without us knowing :)
-            if check_died(
+            if Self::xmrig_check_died(
                 &child_pty,
-                &mut process.lock().unwrap(),
+                &output_end,
+                &process,
                 &start,
-                &mut gui_api.lock().unwrap().output,
+                &gui_api,
+                &pub_api,
             ) {
                 break;
             }
             // Stop on [Stop/Restart] SIGNAL
-            if Self::xmrig_signal_end(&process, &mut stdin, &child_pty, &start, &gui_api) {
+            if Self::xmrig_signal_end(
+                &process,
+                &mut stdin,
+                &child_pty,
+                &output_end,
+                &start,
+                &gui_api,
+            ) {
                 break;
             }
             // Check vector of user input
@@ -718,10 +734,32 @@ impl Helper {
         // 5. If loop broke, we must be done here.
         info!("XMRig Watchdog | Watchdog thread exiting... Goodbye!");
     }
+    fn xmrig_check_died(
+        child_pty: &Arc<Mutex<Child>>,
+        output_end: &OutputEnd,
+        process: &Arc<Mutex<Process>>,
+        start: &Instant,
+        gui_api: &Arc<Mutex<PubXmrigApi>>,
+        pub_api: &Arc<Mutex<PubXmrigApi>>,
+    ) -> bool {
+        let Ok(Some(status)) = child_pty.lock().unwrap().try_wait() else {
+            return false;
+        };
+        output_end.wait(OUTPUT_END_LIMIT);
+        show_exit(
+            &mut process.lock().unwrap(),
+            start,
+            status.success(),
+            &mut gui_api.lock().unwrap().output,
+            &mut pub_api.lock().unwrap().output,
+        );
+        true
+    }
     fn xmrig_signal_end(
         process: &Arc<Mutex<Process>>,
         stdin: &mut Box<dyn std::io::Write + Send>,
         child_pty: &Arc<Mutex<Child>>,
+        output_end: &OutputEnd,
         start: &Instant,
         gui_api: &Arc<Mutex<PubXmrigApi>>,
     ) -> bool {
@@ -735,6 +773,7 @@ impl Helper {
             }
             // The process and GUI locks are released during this wait, which has no timeout.
             let exit = child_pty.lock().unwrap().wait();
+            output_end.wait(OUTPUT_END_LIMIT);
             let mut process = process.lock().unwrap();
             let exit_status = match exit {
                 Ok(e) => {
@@ -775,6 +814,56 @@ impl Helper {
         }
         false
     }
+}
+
+const OUTPUT_END_LIMIT: Duration = Duration::from_secs(1);
+
+// Its end comes from a read made after XMRig exited, so it holds every line XMRig wrote.
+struct Output {
+    inner: Box<dyn Read + Send>,
+    exited: Arc<AtomicBool>,
+    read: mpsc::Sender<()>,
+}
+
+impl Read for Output {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let exited = self.exited.load(Ordering::SeqCst);
+            match self.inner.read(buf) {
+                Ok(0) | Err(_) if exited => {
+                    let _ = self.read.send(());
+                    return Ok(0);
+                }
+                // The macOS log file grows while XMRig runs.
+                Ok(0) | Err(_) => sleep!(100),
+                read => return read,
+            }
+        }
+    }
+}
+
+struct OutputEnd {
+    exited: Arc<AtomicBool>,
+    read: mpsc::Receiver<()>,
+}
+
+impl OutputEnd {
+    // Once XMRig exited: returns when the output was read to its end, or after `limit`.
+    fn wait(&self, limit: Duration) {
+        self.exited.store(true, Ordering::SeqCst);
+        let _ = self.read.recv_timeout(limit);
+    }
+}
+
+fn output(inner: Box<dyn Read + Send>) -> (Box<dyn Read + Send>, OutputEnd) {
+    let exited = Arc::new(AtomicBool::new(false));
+    let (sender, read) = mpsc::channel();
+    let output = Output {
+        inner,
+        exited: Arc::clone(&exited),
+        read: sender,
+    };
+    (Box::new(output), OutputEnd { exited, read })
 }
 
 //---------------------------------------------------------------------------------------------------- [ImgXmrig]
@@ -1011,3 +1100,127 @@ struct Connection {
 //             .unwrap_or(XMRIG_API_PORT_DEFAULT);
 //     }
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::macros::arc_mut;
+    use std::process::Command;
+
+    fn exited(code: i32) -> Arc<Mutex<Child>> {
+        let exit = format!("exit {code}");
+        let mut child = if cfg!(windows) {
+            Command::new(r"C:\windows\system32\cmd.exe")
+                .args(["/C", &exit])
+                .spawn()
+        } else {
+            Command::new("sh").args(["-c", &exit]).spawn()
+        }
+        .unwrap();
+        child.wait().unwrap();
+        arc_mut!(child)
+    }
+
+    fn xmrig() -> Arc<Mutex<Process>> {
+        let process = arc_mut!(Process::new(
+            ProcessName::Xmrig,
+            String::new(),
+            PathBuf::new()
+        ));
+        process.lock().unwrap().state = ProcessState::Alive;
+        process
+    }
+
+    #[test]
+    fn last_lines_of_xmrig_come_before_its_exit_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("xmrig_output");
+        std::fs::write(&log, "first\n").unwrap();
+        let (stdout, output_end) = output(Box::new(std::fs::File::open(&log).unwrap()));
+        let process = xmrig();
+        let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
+        // Pushes each line, as read_pty_xmrig does.
+        let reader = thread::spawn({
+            let output_pub = Arc::clone(&output_pub);
+            move || {
+                for line in BufReader::new(stdout).lines() {
+                    writeln!(output_pub.lock().unwrap(), "{}", line.unwrap()).unwrap();
+                }
+            }
+        });
+        while !output_pub.lock().unwrap().contains("first") {
+            sleep!(1);
+        }
+        // XMRig writes to the macOS log after the reader reached its end.
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&log)
+            .unwrap()
+            .write_all(b"last\n")
+            .unwrap();
+        let (gui_api, pub_api) = (arc_mut!(PubXmrigApi::new()), arc_mut!(PubXmrigApi::new()));
+        assert!(Helper::xmrig_check_died(
+            &exited(0),
+            &output_end,
+            &process,
+            &Instant::now(),
+            &gui_api,
+            &pub_api,
+        ));
+        let output = &gui_api.lock().unwrap().output;
+        assert!(output.starts_with("first\nlast\n"), "{output}");
+        assert!(output.contains("Exit status: [Successful]"), "{output}");
+        reader.join().unwrap();
+    }
+
+    fn reader_gone() -> OutputEnd {
+        output(Box::new(std::io::empty())).1
+    }
+
+    #[test]
+    fn a_failed_xmrig_shows_its_exit_status_as_failed() {
+        let process = xmrig();
+        let gui_api = arc_mut!(PubXmrigApi::new());
+        assert!(Helper::xmrig_check_died(
+            &exited(1),
+            &reader_gone(),
+            &process,
+            &Instant::now(),
+            &gui_api,
+            &arc_mut!(PubXmrigApi::new()),
+        ));
+        let output = &gui_api.lock().unwrap().output;
+        assert!(output.contains("Exit status: [Failed]"), "{output}");
+        assert_eq!(process.lock().unwrap().state, ProcessState::Failed);
+    }
+
+    #[test]
+    fn a_stopped_xmrig_ends_its_output() {
+        let (mut stdout, output_end) = output(Box::new(std::io::empty()));
+        let (ended, output_ended) = mpsc::channel();
+        thread::spawn(move || {
+            std::io::copy(&mut stdout, &mut std::io::sink()).unwrap();
+            ended.send(()).unwrap();
+        });
+        let process = xmrig();
+        process.lock().unwrap().signal = ProcessSignal::Stop;
+        let mut stdin: Box<dyn IoWrite + Send> = Box::new(std::io::sink());
+        assert!(Helper::xmrig_signal_end(
+            &process,
+            &mut stdin,
+            &exited(0),
+            &output_end,
+            &Instant::now(),
+            &arc_mut!(PubXmrigApi::new()),
+        ));
+        assert!(output_ended.recv_timeout(Duration::from_secs(1)).is_ok());
+    }
+
+    #[test]
+    fn exit_status_waits_for_a_stuck_reader_until_the_limit() {
+        let (_stdout, output_end) = output(Box::new(std::io::empty()));
+        let waited = Instant::now();
+        output_end.wait(Duration::from_millis(10));
+        assert!(waited.elapsed() >= Duration::from_millis(10));
+    }
+}

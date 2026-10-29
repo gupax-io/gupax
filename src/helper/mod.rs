@@ -748,46 +748,66 @@ fn check_died(
     process: &mut Process,
     start: &Instant,
     gui_api_output_raw: &mut String,
+    pub_api_output: &mut String,
 ) -> bool {
     // Check if the process secretly died without us knowing :)
     if let Ok(Some(code)) = child_pty.lock().unwrap().try_wait() {
-        debug!(
-            "{} Watchdog | Process secretly died on us! Getting exit status...",
-            process.name
-        );
-        let exit_status = match code.success() {
-            true => {
-                process.state = ProcessState::Dead;
-                "Successful"
-            }
-            false => {
-                process.state = ProcessState::Failed;
-                "Failed"
-            }
-        };
-        let uptime = Uptime::from(start.elapsed());
-        info!(
-            "{} | Stopped ... Uptime was: [{}], Exit status: [{}]",
-            process.name, uptime, exit_status
-        );
-        if let Err(e) = writeln!(
-            *gui_api_output_raw,
-            "{}\n{} stopped | Uptime: [{}] | Exit status: [{}]\n{}\n\n\n\n",
-            process.name, HORI_CONSOLE, uptime, exit_status, HORI_CONSOLE
-        ) {
-            error!(
-                "{} Watchdog | GUI Uptime/Exit status write failed: {}",
-                process.name, e
-            );
-        }
-        process.signal = ProcessSignal::None;
-        debug!(
-            "{} Watchdog | Secret dead process reap OK, breaking",
-            process.name
+        show_exit(
+            process,
+            start,
+            code.success(),
+            gui_api_output_raw,
+            pub_api_output,
         );
         return true;
     }
     false
+}
+
+// The Helper loop moves the output of a process to the GUI only while it is alive.
+fn show_exit(
+    process: &mut Process,
+    start: &Instant,
+    success: bool,
+    gui_api_output_raw: &mut String,
+    pub_api_output: &mut String,
+) {
+    debug!(
+        "{} Watchdog | Process secretly died on us! Getting exit status...",
+        process.name
+    );
+    let exit_status = match success {
+        true => {
+            process.state = ProcessState::Dead;
+            "Successful"
+        }
+        false => {
+            process.state = ProcessState::Failed;
+            "Failed"
+        }
+    };
+    let uptime = Uptime::from(start.elapsed());
+    info!(
+        "{} | Stopped ... Uptime was: [{}], Exit status: [{}]",
+        process.name, uptime, exit_status
+    );
+    gui_api_output_raw.push_str(&std::mem::take(pub_api_output));
+    gui_api_output_raw.push_str(&std::mem::take(&mut *process.output_pub.lock().unwrap()));
+    if let Err(e) = writeln!(
+        *gui_api_output_raw,
+        "{}\n{} stopped | Uptime: [{}] | Exit status: [{}]\n{}\n\n\n\n",
+        process.name, HORI_CONSOLE, uptime, exit_status, HORI_CONSOLE
+    ) {
+        error!(
+            "{} Watchdog | GUI Uptime/Exit status write failed: {}",
+            process.name, e
+        );
+    }
+    process.signal = ProcessSignal::None;
+    debug!(
+        "{} Watchdog | Secret dead process reap OK, breaking",
+        process.name
+    );
 }
 
 // Allow to check if a process outside of Gupax is still alive, without having a pty to it
