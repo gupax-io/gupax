@@ -2235,7 +2235,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 [[package]]
 name = "elevated-helper"
 version = "0.1.0"
-source = "git+https://github.com/Cyrix126/elevated-helper#5626289b148e85a97555db758579a318a943f125"
+source = "git+https://github.com/Cyrix126/elevated-helper#a638397d1b15b67f6a46609605cad5394b4a1b9f"
 dependencies = [
  "clap",
  "conpty",

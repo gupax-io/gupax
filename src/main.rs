@@ -169,26 +169,12 @@ fn main() {
 fn run_elevated_helper(mut args: elevated_helper::cli::Args) -> ! {
     use windows::Win32::System::Threading::BELOW_NORMAL_PRIORITY_CLASS;
     args.priority = Some(BELOW_NORMAL_PRIORITY_CLASS.0);
-    if let Err(e) = elevated_helper::run(args) {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    }
-    use sysinfo::System;
-    let mut sys = System::new();
-    let process = sys.processes_by_exact_name("xmrig.exe".as_ref()).next();
-
-    if let Some(process) = process {
-        let pid = process.pid();
-        loop {
-            use crate::utils::macros::sleep;
-
-            sleep!(5000);
-            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
-            // check if xmrig is still alive
-            if sys.process(pid).is_none() {
-                break;
-            }
+    match elevated_helper::run(args) {
+        // Windows exit codes are u32, which this cast keeps bit for bit.
+        Ok(code) => std::process::exit(code as i32),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
         }
     }
-    std::process::exit(0);
 }
