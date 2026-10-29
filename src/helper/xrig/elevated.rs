@@ -59,7 +59,8 @@ pub(super) fn command_line(args: &[String]) -> String {
 
 pub(super) fn powershell(gupax_exe: &Path, command_line: &str) -> Command {
     let mut cmd = Command::new("powershell");
-    cmd.args(["-Command", SCRIPT]);
+    // The user's profile could prompt in the hidden window or slow every start.
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT]);
     cmd.env("GUPAX_HELPER_EXE", gupax_exe);
     cmd.env("GUPAX_HELPER_ARGS", command_line);
     cmd
@@ -100,7 +101,10 @@ mod tests {
     fn powershell_takes_the_values_from_the_environment() {
         let cmd = powershell(Path::new(r"C:\Gupax [x]\Gupax.exe"), "--elevated-helper");
         assert_eq!(cmd.get_program(), "powershell");
-        assert_eq!(cmd.get_args().collect::<Vec<_>>(), ["-Command", SCRIPT]);
+        assert_eq!(
+            cmd.get_args().collect::<Vec<_>>(),
+            ["-NoProfile", "-NonInteractive", "-Command", SCRIPT]
+        );
         assert_eq!(
             cmd.get_envs().collect::<Vec<_>>(),
             [
