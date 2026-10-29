@@ -806,7 +806,7 @@ impl App {
         Helper::spawn_helper(&app.helper, app.pid, app.max_threads);
         info!("Helper ... OK");
 
-        // Check for privilege. Should be Admin on [Windows] and NOT root on Unix.
+        // Gupax runs as a regular user, only XMRig is elevated.
         info!("App Init | Checking for privilege level...");
         #[cfg(target_os = "windows")]
         if is_elevated::is_elevated() {
