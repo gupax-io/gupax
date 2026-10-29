@@ -36,7 +36,9 @@ use tokio::spawn;
 
 use super::Hashrate;
 use super::xmrig_proxy::ImgProxy;
-use std::process::{Child, Command};
+use std::process::Child;
+#[cfg(not(target_os = "windows"))]
+use std::process::Command;
 
 // Gupax's console shows plain text, and the Windows pseudo console adds lines made
 // of escape sequences only.
@@ -460,30 +462,6 @@ impl Helper {
         cmd.current_dir(path.as_path().parent().unwrap());
         cmd
     }
-    // XMRig is started by an elevated Gupax, which relays its input and output.
-    #[cfg(target_os = "windows")]
-    fn create_xmrig_cmd_windows(
-        args: Vec<String>,
-        path_binary: PathBuf,
-        stdin_name: &str,
-        stdout_name: &str,
-    ) -> Command {
-        use super::elevated;
-        let gupax_exe_path = std::env::current_exe().unwrap();
-
-        use std::os::windows::process::CommandExt;
-        let mut cmd = elevated::powershell(
-            &gupax_exe_path,
-            &elevated::command_line(&elevated::helper_args(
-                &path_binary,
-                &args,
-                stdin_name,
-                stdout_name,
-            )),
-        );
-        cmd.creation_flags(0x08000000);
-        cmd
-    }
 
     #[cold]
     #[inline(never)]
@@ -513,31 +491,22 @@ impl Helper {
         cfg_if! {
             if #[cfg(windows)] {
 
-        use uuid::Uuid;
-        let id = Uuid::new_v4();
-        let stdin_name = format!(r"xmrig_stdin_{}", id);
-        let stdout_name = format!(r"xmrig_stdout_{}", id);
-        let stdin_pipe_path = format!(r"\\.\pipe\{}", stdin_name);
-        let stdout_pipe_path = format!(r"\\.\pipe\{}", stdout_name);
-
-        use elevated_helper::interprocess::os::windows::named_pipe::*;
-
-        let stdin_listener =  PipeListenerOptions::new()
-            .path(Path::new(&stdin_pipe_path))
-            .mode(PipeMode::Bytes)
-            .create_duplex::<pipe_mode::Bytes>().unwrap();
-
-        let stdout_listener = PipeListenerOptions::new()
-            .path(Path::new(&stdout_pipe_path))
-            .mode(PipeMode::Bytes)
-            .create_duplex::<pipe_mode::Bytes>().unwrap();
-
-                    let mut cmd = Self::create_xmrig_cmd_windows(args, path, &stdin_name, &stdout_name);
-            let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
-
-
-        let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_listener.accept().unwrap());
-        let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_listener.accept().unwrap());
+        let started = super::elevated::start(
+            &path,
+            &args,
+            super::elevated::powershell,
+            || process.lock().unwrap().signal == ProcessSignal::Stop,
+        );
+        let (child, stdin, stdout) = match started {
+            Ok(Some(started)) => started,
+            not_started => {
+                super::elevated::not_started(&process, &gui_api, not_started.err());
+                return;
+            }
+        };
+        let child_pty = Arc::new(Mutex::new(child));
+        let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin);
+        let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout);
 
                         } else if #[cfg(target_os = "linux")] {
                     let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
