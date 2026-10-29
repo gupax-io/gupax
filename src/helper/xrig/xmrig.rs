@@ -716,6 +716,8 @@ impl Helper {
             return false;
         };
         output_end.wait(OUTPUT_END_LIMIT);
+        // The next run of XMRig would parse these lines into its state.
+        process.lock().unwrap().output_parse.lock().unwrap().clear();
         show_exit(
             &mut process.lock().unwrap(),
             start,
@@ -768,6 +770,12 @@ impl Helper {
             };
             let uptime = Uptime::from(start.elapsed());
             info!("XMRig | Stopped ... Uptime was: [{uptime}], Exit status: [{exit_status}]");
+            gui_api
+                .lock()
+                .unwrap()
+                .output
+                .push_str(&std::mem::take(&mut *process.output_pub.lock().unwrap()));
+            process.output_parse.lock().unwrap().clear();
             if let Err(e) = writeln!(
                 gui_api.lock().unwrap().output,
                 "{HORI_CONSOLE}\nXMRig stopped | Uptime: [{uptime}] | Exit status: [{exit_status}]\n{HORI_CONSOLE}\n\n\n\n"
@@ -1192,5 +1200,69 @@ mod tests {
         let waited = Instant::now();
         output_end.wait(Duration::from_millis(10));
         assert!(waited.elapsed() >= Duration::from_millis(10));
+    }
+
+    // Ends XMRig on `signal`, with a line left to show and one left to parse.
+    fn end_without_leftovers(signal: ProcessSignal) -> ProcessState {
+        let process = xmrig();
+        process.lock().unwrap().signal = signal;
+        *process.lock().unwrap().output_pub.lock().unwrap() = "last\n".to_string();
+        *process.lock().unwrap().output_parse.lock().unwrap() = "new job\n".to_string();
+        let gui_api = arc_mut!(PubXmrigApi::new());
+        let mut stdin: Box<dyn IoWrite + Send> = Box::new(std::io::sink());
+        assert!(Helper::xmrig_signal_end(
+            &process,
+            &mut stdin,
+            &exited(0),
+            &reader_gone(),
+            &Instant::now(),
+            &gui_api,
+        ));
+        let output = &gui_api.lock().unwrap().output;
+        assert!(output.starts_with("last\n"), "{output}");
+        assert!(output.contains("XMRig stopped"), "{output}");
+        let process = process.lock().unwrap();
+        assert!(process.output_pub.lock().unwrap().is_empty());
+        assert!(process.output_parse.lock().unwrap().is_empty());
+        process.state
+    }
+
+    #[test]
+    fn a_stopped_xmrig_leaves_no_output_to_its_next_run() {
+        assert_eq!(
+            end_without_leftovers(ProcessSignal::Stop),
+            ProcessState::Dead
+        );
+    }
+
+    #[test]
+    fn a_restarted_xmrig_leaves_no_output_to_its_next_run() {
+        assert_eq!(
+            end_without_leftovers(ProcessSignal::Restart),
+            ProcessState::Waiting
+        );
+    }
+
+    #[test]
+    fn an_exited_xmrig_leaves_no_output_to_parse_to_its_next_run() {
+        let process = xmrig();
+        *process.lock().unwrap().output_parse.lock().unwrap() = "new job\n".to_string();
+        assert!(Helper::xmrig_check_died(
+            &exited(0),
+            &reader_gone(),
+            &process,
+            &Instant::now(),
+            &arc_mut!(PubXmrigApi::new()),
+            &arc_mut!(PubXmrigApi::new()),
+        ));
+        assert!(
+            process
+                .lock()
+                .unwrap()
+                .output_parse
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
     }
 }
