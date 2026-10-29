@@ -33,7 +33,10 @@ use std::sync::Mutex;
 // wildcard characters of the path.
 // PowerShell then exits with the code of the helper, which is the code of XMRig, or
 // with 1 when the start failed.
+// The trap writes the reason of a failure in UTF-8.
 const SCRIPT: &str = "$ErrorActionPreference='Stop'; \
+    trap { $e=[IO.StreamWriter]::new([Console]::OpenStandardError()); \
+    $e.WriteLine($_.Exception.GetBaseException().Message); $e.Flush(); exit 1 }; \
     $p=[Diagnostics.Process]::Start([Diagnostics.ProcessStartInfo]@{\
     FileName=$env:GUPAX_HELPER_EXE; Arguments=$env:GUPAX_HELPER_ARGS; \
     Verb='RunAs'; UseShellExecute=$true}); \
@@ -149,7 +152,9 @@ pub(super) fn start(
     powershell: impl FnOnce(&Path, &str) -> Command,
     stopped: impl Fn() -> bool,
 ) -> io::Result<Option<(std::process::Child, Pipe, Pipe)>> {
+    use std::io::Read;
     use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
     use windows::Win32::System::Threading::CREATE_NO_WINDOW;
     let id = uuid::Uuid::new_v4();
     let (stdin_name, stdout_name) = (format!("xmrig_stdin_{id}"), format!("xmrig_stdout_{id}"));
@@ -159,9 +164,17 @@ pub(super) fn start(
         &command_line(&helper_args(xmrig, args, &stdin_name, &stdout_name)),
     );
     cmd.creation_flags(CREATE_NO_WINDOW.0);
+    cmd.stderr(Stdio::piped());
     let mut child = cmd
         .spawn()
         .map_err(|e| io::Error::new(e.kind(), format!("PowerShell could not start: {e}")))?;
+    let reason = child.stderr.take().map(|mut stderr| {
+        std::thread::spawn(move || {
+            let mut reason = Vec::new();
+            let _ = stderr.read_to_end(&mut reason);
+            String::from_utf8_lossy(&reason).trim().to_string()
+        })
+    });
     let connected = connect(&stdin, &stdout, || child.try_wait(), stopped);
     if !matches!(connected, Ok(Some(_))) {
         // A helper started later from the UAC prompt exits, as its pipes are gone.
@@ -169,6 +182,17 @@ pub(super) fn start(
             log::warn!("XMRig | Could not kill PowerShell: {e}");
         }
     }
+    // The stderr of PowerShell ends with it.
+    let connected = connected.map_err(|e| {
+        let reason = reason
+            .and_then(|reason| reason.join().ok())
+            .unwrap_or_default();
+        if reason.is_empty() {
+            e
+        } else {
+            io::Error::new(e.kind(), format!("{e}: {reason}"))
+        }
+    });
     Ok(connected?.map(|(stdin, stdout)| (child, stdin, stdout)))
 }
 
@@ -259,6 +283,26 @@ mod tests {
             .status()
             .unwrap();
         assert_eq!(status.code(), Some(3));
+    }
+
+    // A missing file fails before any UAC prompt.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn powershell_writes_why_the_helper_did_not_start() {
+        let output = powershell(Path::new(r"C:\missing\Gupax.exe"), "")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let reason = String::from_utf8(output.stderr).unwrap();
+        let reason = reason.trim();
+        assert!(!reason.is_empty());
+        // .NET drops the final period of the system message.
+        assert!(
+            io::Error::from_raw_os_error(2)
+                .to_string()
+                .starts_with(reason),
+            "{reason}"
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -479,6 +523,31 @@ mod tests {
                 error
                     .to_string()
                     .starts_with("PowerShell could not start: "),
+                "{error}"
+            );
+        }
+
+        #[test]
+        fn start_shows_why_powershell_failed() {
+            let Err(error) = super::super::start(
+                std::path::Path::new(r"C:\XMRig\xmrig.exe"),
+                &[],
+                |_, _| {
+                    let mut cmd = std::process::Command::new(r"C:\windows\system32\cmd.exe");
+                    cmd.args([
+                        "/C",
+                        "echo The operation was canceled by the user.>&2& exit 1",
+                    ]);
+                    cmd
+                },
+                || false,
+            ) else {
+                panic!("the helper connected");
+            };
+            assert!(
+                error
+                    .to_string()
+                    .ends_with(": The operation was canceled by the user."),
                 "{error}"
             );
         }
