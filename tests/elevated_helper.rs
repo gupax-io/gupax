@@ -24,7 +24,7 @@ use std::{
     process::{Child, Command},
     sync::atomic::{AtomicUsize, Ordering},
     thread::sleep,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use elevated_helper::interprocess::os::windows::named_pipe::{
@@ -161,4 +161,21 @@ fn helper_relays_the_last_lines_of_xmrig() {
     let (output, code) = run_helper(r"C:\windows\system32\cmd.exe", &["/C", "echo last line"]);
     assert!(output.contains("last line"), "{output:?}");
     assert_eq!(code, Some(0));
+}
+
+// Needs a Windows pseudo console: wine relays no Ctrl+C through it.
+#[test]
+fn helper_stops_xmrig_once_gupax_is_gone() {
+    let (mut helper, pipes) =
+        start_helper(r"C:\windows\system32\PING.EXE", &["-n", "30", "127.0.0.1"]);
+    assert!(pipes.is_some());
+    drop(pipes);
+    let gone = Instant::now();
+    while helper.try_wait().unwrap().is_none() {
+        if gone.elapsed() > Duration::from_secs(10) {
+            helper.kill().unwrap();
+            panic!("XMRig kept running");
+        }
+        sleep(Duration::from_millis(100));
+    }
 }
