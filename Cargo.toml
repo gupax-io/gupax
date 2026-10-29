@@ -80,8 +80,6 @@ cfg-if = "1.0"
 flexi_logger = "0.31"
 eframe = {version="0.36.2", features=["wgpu", "glow"]}
 strum = {version="0.28", features=["derive"]}
-## force version of ring to prevent https://rustsec.org/advisories/RUSTSEC-2025-0009
-ring = "0.17.14"
 ## get local ip
 local-ip-address = "0.6"
 ## get public ip

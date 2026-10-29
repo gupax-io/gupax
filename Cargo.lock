@@ -3295,7 +3295,6 @@ dependencies = [
  "reqwest-middleware",
  "reqwest-retry",
  "rfd",
- "ring",
  "serde",
  "serde-this-or-that",
  "serde_json",
