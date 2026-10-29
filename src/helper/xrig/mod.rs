@@ -34,6 +34,8 @@ use thiserror::Error;
 use xmrig::ImgXmrig;
 use xmrig_proxy::ImgProxy;
 
+#[cfg(any(target_os = "windows", test))]
+mod elevated;
 pub mod xmrig;
 pub mod xmrig_proxy;
 

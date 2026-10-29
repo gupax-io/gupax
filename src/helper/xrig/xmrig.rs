@@ -452,7 +452,7 @@ impl Helper {
         cmd.current_dir(path.as_path().parent().unwrap());
         cmd
     }
-    // Gupax should be admin on Windows, so just spawn XMRig normally.
+    // XMRig is started by an elevated Gupax, which relays its input and output.
     #[cfg(target_os = "windows")]
     fn create_xmrig_cmd_windows(
         args: Vec<String>,
@@ -460,26 +460,20 @@ impl Helper {
         stdin_name: &str,
         stdout_name: &str,
     ) -> Command {
+        use super::elevated;
         let gupax_exe_path = std::env::current_exe().unwrap();
 
-        // Launch helper yourself however you want
-        let helper_args = format!(
-            "--elevated-helper --name-stdin-pipe {stdin_name} --name-stdout-pipe {stdout_name} --binary-path {} --arguments={}",
-            path_binary.display(),
-            args.join(",")
-        );
-
         use std::os::windows::process::CommandExt;
-        let mut cmd = std::process::Command::new("powershell");
+        let mut cmd = elevated::powershell(
+            &gupax_exe_path,
+            &elevated::command_line(&elevated::helper_args(
+                &path_binary,
+                &args,
+                stdin_name,
+                stdout_name,
+            )),
+        );
         cmd.creation_flags(0x08000000);
-        cmd.args([
-            "-Command",
-            &format!(
-                "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -Wait",
-                gupax_exe_path.display(),
-                helper_args
-            ),
-        ]);
         cmd
     }
 
