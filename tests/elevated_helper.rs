@@ -154,3 +154,11 @@ fn helper_shows_why_xmrig_did_not_start() {
     );
     assert_eq!(code, Some(1));
 }
+
+// Needs a Windows pseudo console: wine relays none of its output.
+#[test]
+fn helper_relays_the_last_lines_of_xmrig() {
+    let (output, code) = run_helper(r"C:\windows\system32\cmd.exe", &["/C", "echo last line"]);
+    assert!(output.contains("last line"), "{output:?}");
+    assert_eq!(code, Some(0));
+}
