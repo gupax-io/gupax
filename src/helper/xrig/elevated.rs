@@ -21,11 +21,13 @@ use std::process::Command;
 // Shows the UAC prompt, then runs the helper and waits for it. PowerShell reads the
 // values from the environment as plain text, and ProcessStartInfo keeps the
 // wildcard characters of the path.
+// PowerShell then exits with the code of the helper, which is the code of XMRig, or
+// with 1 when the start failed.
 const SCRIPT: &str = "$ErrorActionPreference='Stop'; \
     $p=[Diagnostics.Process]::Start([Diagnostics.ProcessStartInfo]@{\
     FileName=$env:GUPAX_HELPER_EXE; Arguments=$env:GUPAX_HELPER_ARGS; \
     Verb='RunAs'; UseShellExecute=$true}); \
-    $p.WaitForExit()";
+    $p.WaitForExit(); exit $p.ExitCode";
 
 // Read by [Cli] in the elevated Gupax.
 pub(super) fn helper_args(
@@ -112,5 +114,18 @@ mod tests {
                 )
             ]
         );
+    }
+
+    // RunAs prompts unless Gupax is already elevated, as on the CI runners.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn powershell_exits_with_the_helper_code() {
+        if !is_elevated::is_elevated() {
+            return;
+        }
+        let status = powershell(Path::new(r"C:\windows\system32\cmd.exe"), "/C exit 3")
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(3));
     }
 }
