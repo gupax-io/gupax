@@ -762,4 +762,24 @@ Uptime         = 0h 2m 4s
             "Error: C:\\XMRig\\xmrig.exe: not found\n * ABOUT XMRig/6.22\n"
         );
     }
+
+    #[tokio::test]
+    async fn xmrig_lines_after_its_banner_show_as_text() {
+        let (output, _) = read_xmrig(
+            concat!(
+                " * ABOUT XMRig/6.22\r\n",
+                "1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n",
+                "\x1b[1;37mnew job\x1b[0m from pool\r\n",
+                "\x1b[?25h\r\n",
+                "end\r\n"
+            ),
+            "end",
+            ProcessState::Middle,
+        )
+        .await;
+        assert!(
+            output.ends_with("8\nnew job from pool\nend\n"),
+            "{output:?}"
+        );
+    }
 }

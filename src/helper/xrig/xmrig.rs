@@ -88,6 +88,9 @@ impl Helper {
             }
 
             while let Some(Ok(line)) = lines.next() {
+                let Some(line) = printable(line) else {
+                    continue;
+                };
                 // need to verify if pool still working
                 // for that need to catch "connect error"
                 // only check if xvb process is used and xmrig-proxy is not.
