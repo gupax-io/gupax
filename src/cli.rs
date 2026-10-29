@@ -35,9 +35,12 @@ pub struct Cli {
     /// Start Gupax hidden in the system tray
     #[clap(long, action, conflicts_with = "daemon")]
     pub tray: bool,
+    // Elevated helper arguments sent by Gupax v2.0.2 and older: a Gupax still
+    // running after a self-update starts the updated exe with them.
     #[cfg(target_os = "windows")]
     #[arg(
         long,
+        hide = true,
         requires("name_stdin_pipe"),
         requires("name_stdout_pipe"),
         requires("binary_path"),
@@ -47,16 +50,16 @@ pub struct Cli {
     )]
     pub elevated_helper: bool,
     #[cfg(target_os = "windows")]
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub name_stdin_pipe: Option<String>,
     #[cfg(target_os = "windows")]
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub name_stdout_pipe: Option<String>,
     #[cfg(target_os = "windows")]
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub binary_path: Option<std::path::PathBuf>,
     #[cfg(target_os = "windows")]
-    #[arg(long, required(false), value_delimiter = ',')]
+    #[arg(long, hide = true, required(false), value_delimiter = ',')]
     pub arguments: Vec<String>,
 }
 
@@ -190,4 +193,28 @@ pub fn parse_args<S: Into<String>>(mut app: App, args: &Cli, panic: S) -> App {
         }
     }
     app
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::Cli;
+    use clap::Parser;
+
+    #[test]
+    fn helper_flags_of_older_gupax_still_parse() {
+        let cli = Cli::try_parse_from([
+            "Gupax.exe",
+            "--elevated-helper",
+            "--name-stdin-pipe",
+            "stdin",
+            "--name-stdout-pipe",
+            "stdout",
+            "--binary-path",
+            r"C:\XMRig\xmrig.exe",
+            "--arguments=--threads,6",
+        ])
+        .unwrap();
+        assert!(cli.elevated_helper);
+        assert_eq!(cli.arguments, ["--threads", "6"]);
+    }
 }

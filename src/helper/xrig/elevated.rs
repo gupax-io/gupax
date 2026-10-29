@@ -29,7 +29,7 @@ const SCRIPT: &str = "$ErrorActionPreference='Stop'; \
     Verb='RunAs'; UseShellExecute=$true}); \
     $p.WaitForExit(); exit $p.ExitCode";
 
-// Read by [Cli] in the elevated Gupax.
+// The elevated Gupax parses them with [elevated_helper::cli::Args].
 pub(super) fn helper_args(
     xmrig: &Path,
     args: &[String],
@@ -37,17 +37,19 @@ pub(super) fn helper_args(
     stdout_name: &str,
 ) -> Vec<String> {
     [
-        "--elevated-helper",
-        "--name-stdin-pipe",
+        "elevated-helper",
+        "--name-pipe-stdin",
         stdin_name,
-        "--name-stdout-pipe",
+        "--name-pipe-stdout",
         stdout_name,
-        "--binary-path",
+        "--program-path",
         &xmrig.display().to_string(),
-        &format!("--arguments={}", args.join(",")),
+        "--",
     ]
     .map(String::from)
-    .to_vec()
+    .into_iter()
+    .chain(args.iter().cloned())
+    .collect()
 }
 
 pub(super) fn command_line(args: &[String]) -> String {
@@ -86,14 +88,14 @@ mod tests {
                 r"C:\Users\Jo O'Neil [x]\XMRig\xmrig.exe",
                 &["--rig-id=Jo's rig", "--threads", "6"]
             ),
-            r#"--elevated-helper --name-stdin-pipe stdin --name-stdout-pipe stdout --binary-path "C:\Users\Jo O'Neil [x]\XMRig\xmrig.exe" "--arguments=--rig-id=Jo's rig,--threads,6""#
+            r#"elevated-helper --name-pipe-stdin stdin --name-pipe-stdout stdout --program-path "C:\Users\Jo O'Neil [x]\XMRig\xmrig.exe" -- "--rig-id=Jo's rig" --threads 6"#
         );
         assert_eq!(
             command_line(
                 r"C:\XMRig\xmrig.exe",
                 &[r#"--rig-id="a b""#, r"C:\my logs\"]
             ),
-            r#"--elevated-helper --name-stdin-pipe stdin --name-stdout-pipe stdout --binary-path C:\XMRig\xmrig.exe "--arguments=--rig-id=\"a b\",C:\my logs\\""#
+            r#"elevated-helper --name-pipe-stdin stdin --name-pipe-stdout stdout --program-path C:\XMRig\xmrig.exe -- "--rig-id=\"a b\"" "C:\my logs\\""#
         );
     }
 
@@ -131,5 +133,28 @@ mod tests {
             .status()
             .unwrap();
         assert_eq!(status.code(), Some(3));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn helper_reads_the_xmrig_arguments() {
+        use clap::Parser;
+        let parse = |xmrig_args: &[String]| {
+            elevated_helper::cli::Args::try_parse_from(helper_args(
+                Path::new(r"C:\XMRig\xmrig.exe"),
+                xmrig_args,
+                "stdin",
+                "stdout",
+            ))
+            .unwrap()
+        };
+        let xmrig_args =
+            ["--cuda-devices=0,1", "--rig-id=a,b", "--daemon", "state"].map(String::from);
+        let args = parse(&xmrig_args);
+        assert_eq!(args.name_pipe_stdin, "stdin");
+        assert_eq!(args.name_pipe_stdout, "stdout");
+        assert_eq!(args.program_path, Path::new(r"C:\XMRig\xmrig.exe"));
+        assert_eq!(args.program_args, xmrig_args);
+        assert!(parse(&[]).program_args.is_empty());
     }
 }

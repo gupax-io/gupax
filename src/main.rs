@@ -58,40 +58,26 @@ extern crate sudo as sudo_check;
 
 //---------------------------------------------------------------------------------------------------- Main [App] frame
 fn main() {
+    #[cfg(target_os = "windows")]
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "elevated-helper")
+    {
+        run_elevated_helper(elevated_helper::cli::Args::parse_from(
+            std::env::args_os().skip(1),
+        ));
+    }
     let args = Cli::parse();
     #[cfg(target_os = "windows")]
     if args.elevated_helper {
-        use windows::Win32::System::Threading::BELOW_NORMAL_PRIORITY_CLASS;
-        let args_elevated_helper = elevated_helper::cli::Args {
+        run_elevated_helper(elevated_helper::cli::Args {
             name_pipe_stdin: args.name_stdin_pipe.unwrap(),
             name_pipe_stdout: args.name_stdout_pipe.unwrap(),
             program_path: args.binary_path.unwrap(),
             program_args: args.arguments,
             creation_flags: None,
-            priority: Some(BELOW_NORMAL_PRIORITY_CLASS.0),
-        };
-        if let Err(e) = elevated_helper::run(args_elevated_helper) {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
-        }
-        use sysinfo::System;
-        let mut sys = System::new();
-        let process = sys.processes_by_exact_name("xmrig.exe".as_ref()).next();
-
-        if let Some(process) = process {
-            let pid = process.pid();
-            loop {
-                use crate::utils::macros::sleep;
-
-                sleep!(5000);
-                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
-                // check if xmrig is still alive
-                if sys.process(pid).is_none() {
-                    break;
-                }
-            }
-        }
-        std::process::exit(0);
+            priority: None,
+        });
     }
 
     let now = Instant::now();
@@ -177,4 +163,32 @@ fn main() {
             &name_version,
         );
     }
+}
+
+#[cfg(target_os = "windows")]
+fn run_elevated_helper(mut args: elevated_helper::cli::Args) -> ! {
+    use windows::Win32::System::Threading::BELOW_NORMAL_PRIORITY_CLASS;
+    args.priority = Some(BELOW_NORMAL_PRIORITY_CLASS.0);
+    if let Err(e) = elevated_helper::run(args) {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+    use sysinfo::System;
+    let mut sys = System::new();
+    let process = sys.processes_by_exact_name("xmrig.exe".as_ref()).next();
+
+    if let Some(process) = process {
+        let pid = process.pid();
+        loop {
+            use crate::utils::macros::sleep;
+
+            sleep!(5000);
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+            // check if xmrig is still alive
+            if sys.process(pid).is_none() {
+                break;
+            }
+        }
+    }
+    std::process::exit(0);
 }
