@@ -153,16 +153,15 @@ pub(super) fn start(
     use windows::Win32::System::Threading::CREATE_NO_WINDOW;
     let id = uuid::Uuid::new_v4();
     let (stdin_name, stdout_name) = (format!("xmrig_stdin_{id}"), format!("xmrig_stdout_{id}"));
-    let (stdin, stdout) = (
-        listener(&stdin_name).unwrap(),
-        listener(&stdout_name).unwrap(),
-    );
+    let (stdin, stdout) = (listener(&stdin_name)?, listener(&stdout_name)?);
     let mut cmd = powershell(
-        &std::env::current_exe().unwrap(),
+        &std::env::current_exe()?,
         &command_line(&helper_args(xmrig, args, &stdin_name, &stdout_name)),
     );
     cmd.creation_flags(CREATE_NO_WINDOW.0);
-    let mut child = cmd.spawn().unwrap();
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| io::Error::new(e.kind(), format!("PowerShell could not start: {e}")))?;
     let connected = connect(&stdin, &stdout, || child.try_wait(), stopped);
     if !matches!(connected, Ok(Some(_))) {
         // A helper started later from the UAC prompt exits, as its pipes are gone.
@@ -464,6 +463,24 @@ mod tests {
                 ended.recv_timeout(Duration::from_secs(5)),
                 Ok(Ok(0) | Err(_))
             ));
+        }
+
+        #[test]
+        fn start_reports_a_powershell_that_does_not_start() {
+            let Err(error) = super::super::start(
+                std::path::Path::new(r"C:\XMRig\xmrig.exe"),
+                &[],
+                |_, _| std::process::Command::new(r"C:\missing\powershell.exe"),
+                || false,
+            ) else {
+                panic!("PowerShell started");
+            };
+            assert!(
+                error
+                    .to_string()
+                    .starts_with("PowerShell could not start: "),
+                "{error}"
+            );
         }
     }
 }
