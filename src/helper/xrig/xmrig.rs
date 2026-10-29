@@ -38,6 +38,13 @@ use super::Hashrate;
 use super::xmrig_proxy::ImgProxy;
 use std::process::{Child, Command};
 
+// Gupax's console shows plain text, and the Windows pseudo console adds lines made
+// of escape sequences only.
+fn printable(line: String) -> Option<String> {
+    let line = strip_ansi_escapes::strip_str(line);
+    (!line.trim().is_empty()).then_some(line)
+}
+
 impl Helper {
     #[cold]
     #[inline(never)]
@@ -59,14 +66,12 @@ impl Helper {
         let mut i = 0;
         while process.lock().unwrap().is_alive() {
             let mut lines = BufReader::new(&mut reader).lines();
-            // Run a ANSI escape sequence filter for the first few lines.
+            // XMRig's banner is among the first lines.
             while let Some(Ok(line)) = lines.next() {
-                let line = strip_ansi_escapes::strip_str(line);
-                // skip until the first line of xmrig is appearing, hiding automatic input of gupax
-                if i == 0 && !line.contains("ABOUT") {
+                let Some(line) = printable(line) else {
                     continue;
-                }
-                if i == 0 && line.contains("ABOUT") {
+                };
+                if line.contains("ABOUT") {
                     info!("Xmrig is started");
                 }
                 if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {

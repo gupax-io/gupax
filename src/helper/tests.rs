@@ -748,4 +748,18 @@ Uptime         = 0h 2m 4s
         let (_, state) = read_xmrig(" * ABOUT XMRig/6.22\r\n", "ABOUT", ProcessState::Middle).await;
         assert_eq!(state, ProcessState::Middle);
     }
+
+    #[tokio::test]
+    async fn xmrig_lines_before_its_banner_are_shown() {
+        let (output, _) = read_xmrig(
+            "\x1b[?25l\x1b[2J\x1b[H\r\nError: C:\\XMRig\\xmrig.exe: not found\r\n * ABOUT XMRig/6.22\r\n",
+            "ABOUT",
+            ProcessState::Middle,
+        )
+        .await;
+        assert_eq!(
+            output,
+            "Error: C:\\XMRig\\xmrig.exe: not found\n * ABOUT XMRig/6.22\n"
+        );
+    }
 }
