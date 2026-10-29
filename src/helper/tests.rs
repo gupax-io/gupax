@@ -683,4 +683,69 @@ Uptime         = 0h 2m 4s
         assert!(process.output_pub.lock().unwrap().is_empty());
         assert_eq!(process.state, ProcessState::Dead);
     }
+
+    // Returns the output the XMRig reader shows from `input`, and the state of
+    // XMRig once `until` is shown.
+    async fn read_xmrig(
+        input: &'static str,
+        until: &'static str,
+        state: ProcessState,
+    ) -> (String, ProcessState) {
+        use crate::disk::state::P2pool;
+        use crate::helper::xvb::PubXvbApi;
+        use crate::utils::macros::arc_mut;
+        use std::path::PathBuf;
+        use std::time::{Duration, Instant};
+        let process = arc_mut!(Process::new(
+            ProcessName::Xmrig,
+            String::new(),
+            PathBuf::new()
+        ));
+        process.lock().unwrap().state = state;
+        let output_pub = arc_mut!(String::new());
+        // The reader runs while XMRig is alive: this ends it.
+        let shown = std::thread::spawn({
+            let (process, output_pub) = (process.clone(), output_pub.clone());
+            move || {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !output_pub.lock().unwrap().contains(until) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                let state = process.lock().unwrap().state;
+                process.lock().unwrap().state = ProcessState::Dead;
+                state
+            }
+        });
+        let not_alive = || {
+            arc_mut!(Process::new(
+                ProcessName::Xvb,
+                String::new(),
+                PathBuf::new()
+            ))
+        };
+        Helper::read_pty_xmrig(
+            arc_mut!(String::new()),
+            output_pub.clone(),
+            Box::new(std::io::Cursor::new(input)),
+            not_alive(),
+            not_alive(),
+            not_alive(),
+            &arc_mut!(PubXvbApi::new()),
+            &P2pool::default(),
+            &arc_mut!(ImgP2pool::new()),
+            &arc_mut!(ImgProxy::new()),
+            &XmrigProxy::default(),
+            process,
+        )
+        .await;
+        let state = shown.join().unwrap();
+        let output = output_pub.lock().unwrap().clone();
+        (output, state)
+    }
+
+    #[tokio::test]
+    async fn xmrig_banner_keeps_a_stop_in_progress() {
+        let (_, state) = read_xmrig(" * ABOUT XMRig/6.22\r\n", "ABOUT", ProcessState::Middle).await;
+        assert_eq!(state, ProcessState::Middle);
+    }
 }

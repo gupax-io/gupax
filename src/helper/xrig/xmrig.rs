@@ -68,7 +68,6 @@ impl Helper {
                 }
                 if i == 0 && line.contains("ABOUT") {
                     info!("Xmrig is started");
-                    process.lock().unwrap().state = ProcessState::NotMining;
                 }
                 if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
                     error!("XMRig PTY Parse | Output error: {e}");
