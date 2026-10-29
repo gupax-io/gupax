@@ -31,6 +31,8 @@ use elevated_helper::interprocess::os::windows::named_pipe::{
     DuplexPipeStream, PipeListener, PipeListenerOptions, PipeMode, pipe_mode::Bytes,
 };
 
+use std::io::Write;
+
 type Pipe = DuplexPipeStream<Bytes>;
 
 // Serves the pipes as the XMRig watchdog does, then starts Gupax with `cli` given
@@ -178,4 +180,98 @@ fn helper_stops_xmrig_once_gupax_is_gone() {
         }
         sleep(Duration::from_millis(100));
     }
+}
+
+// Reads the output until the helper exits, killing it after `limit`.
+fn read_output_within(mut helper: Child, stdout: Pipe, limit: Duration) -> String {
+    let (sender, output) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(read_output(stdout));
+    });
+    output.recv_timeout(limit).unwrap_or_else(|_| {
+        helper.kill().unwrap();
+        panic!("the helper still ran after {limit:?}");
+    })
+}
+
+// Needs a Windows pseudo console: wine relays no Ctrl+C through it.
+#[test]
+fn helper_stops_xmrig_on_ctrl_c() {
+    let (helper, pipes) = start_helper(r"C:\windows\system32\PING.EXE", &["-n", "30", "127.0.0.1"]);
+    let (mut stdin, stdout) = pipes.unwrap();
+    // Gupax stops XMRig with it.
+    stdin.write_all(&[0x03]).unwrap();
+    let output = read_output_within(helper, stdout, Duration::from_secs(10));
+    assert!(!output.starts_with("Error:"), "{output:?}");
+}
+
+// Needs a Windows pseudo console: wine relays none of its output.
+#[test]
+fn helper_passes_input_to_xmrig() {
+    let (helper, pipes) = start_helper(
+        r"C:\windows\system32\cmd.exe",
+        &["/V:ON", "/C", "set /p x=&echo got !x!"],
+    );
+    let (mut stdin, stdout) = pipes.unwrap();
+    // As Gupax writes a command typed in the XMRig console.
+    stdin.write_all(b"h\r\n").unwrap();
+    let output = read_output_within(helper, stdout, Duration::from_secs(10));
+    assert!(output.contains("got h"), "{output:?}");
+}
+
+// Needs PowerShell, which wine lacks.
+#[test]
+fn helper_runs_xmrig_below_normal_priority() {
+    let (helper, _pipes) =
+        start_helper(r"C:\windows\system32\PING.EXE", &["-n", "30", "127.0.0.1"]);
+    let helper = sysinfo::Pid::from_u32(helper.id());
+    let mut system = sysinfo::System::new();
+    let started = Instant::now();
+    let ping = loop {
+        system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        if let Some(ping) = system.processes().values().find(|process| {
+            process.parent() == Some(helper) && process.name().eq_ignore_ascii_case("PING.EXE")
+        }) {
+            break ping.pid();
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "XMRig did not start"
+        );
+        sleep(Duration::from_millis(10));
+    };
+    let priority = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command"])
+        .arg(format!("(Get-Process -Id {ping}).PriorityClass"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&priority.stdout).trim(),
+        "BelowNormal"
+    );
+}
+
+// As a helper started from a UAC prompt left open after Gupax quit.
+#[test]
+fn helper_without_its_pipes_starts_no_xmrig() {
+    let dir = tempfile::tempdir().unwrap();
+    let started = dir.path().join("started");
+    let pipe = format!("gupax_test_gone_{}", std::process::id());
+    let status = Command::new(env!("CARGO_BIN_EXE_gupax"))
+        .args(["elevated-helper", "--name-pipe-stdin", &pipe])
+        .args(["--name-pipe-stdout", &pipe, "--program-path"])
+        .args([
+            r"C:\windows\system32\cmd.exe",
+            "--",
+            "/C",
+            "type",
+            "nul",
+            ">",
+        ])
+        .arg(&started)
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(1));
+    assert!(!started.exists());
 }

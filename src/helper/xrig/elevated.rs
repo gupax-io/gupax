@@ -551,5 +551,52 @@ mod tests {
                 "{error}"
             );
         }
+
+        #[test]
+        fn start_runs_xmrig_through_powershell_and_the_helper() {
+            if !is_elevated::is_elevated() {
+                return;
+            }
+            // A plain `cargo test` builds Gupax there for the integration tests.
+            let gupax = std::env::current_exe().unwrap();
+            let gupax = gupax.parent().unwrap().parent().unwrap().join("gupax.exe");
+            let dir = tempfile::Builder::new()
+                .prefix("Jo O'Neil [x] ")
+                .tempdir()
+                .unwrap();
+            let helper = dir.path().join("Gupax.exe");
+            std::fs::copy(&gupax, &helper).unwrap();
+            // Echoes the arguments as XMRig receives them.
+            let xmrig = dir.path().join("xmrig.exe");
+            std::fs::copy(r"C:\windows\system32\cmd.exe", &xmrig).unwrap();
+            let args = [
+                "/C",
+                "echo",
+                "--rig-id=Jo's rig",
+                "--cuda-devices=0,1",
+                "&",
+                "exit",
+                "3",
+            ];
+            let (mut powershell, _stdin, mut stdout) = super::super::start(
+                &xmrig,
+                &args.map(String::from),
+                |_, command_line| super::super::powershell(&helper, command_line),
+                || false,
+            )
+            .unwrap()
+            .unwrap();
+            let mut output = Vec::new();
+            let mut buf = [0; 4096];
+            while let Ok(n @ 1..) = stdout.read(&mut buf) {
+                output.extend_from_slice(&buf[..n]);
+            }
+            let output = String::from_utf8_lossy(&output);
+            assert!(
+                output.contains(r#""--rig-id=Jo's rig" --cuda-devices=0,1"#),
+                "{output:?}"
+            );
+            assert_eq!(powershell.wait().unwrap().code(), Some(3));
+        }
     }
 }
