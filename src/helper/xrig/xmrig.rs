@@ -461,7 +461,7 @@ impl Helper {
 
         // Launch helper yourself however you want
         let helper_args = format!(
-            "--elevated-helper --name-stdin-pipe {stdin_name} --name-stdout-pipe {stdout_name} --binary-path {} --arguments={}",
+            "--elevated-helper --name-stdin-pipe {stdin_name} --name-stdout-pipe {stdout_name} --binary-path \"{}\" --arguments={}",
             path_binary.display(),
             args.join(",")
         );
