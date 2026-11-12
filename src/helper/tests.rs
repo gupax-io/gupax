@@ -651,6 +651,7 @@ Uptime         = 0h 2m 4s
     use crate::utils::constants::HORI_CONSOLE;
     use std::io::{BufRead, Read, Write};
     use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
@@ -1096,21 +1097,30 @@ Uptime         = 0h 2m 4s
     }
 
     #[test]
-    fn a_refused_local_api_fails_at_once() {
+    fn a_failing_local_api_is_asked_once() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        let started = Instant::now();
+        let address = listener.local_addr().unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        std::thread::spawn({
+            let requests = Arc::clone(&requests);
+            move || {
+                for connection in listener.incoming() {
+                    requests.fetch_add(1, Ordering::Relaxed);
+                    // Closed unanswered.
+                    drop(connection);
+                }
+            }
+        });
         let request = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
             .block_on(
                 crate::miscs::local_client()
-                    .get(format!("http://127.0.0.1:{port}"))
+                    .get(format!("http://{address}"))
                     .send(),
             );
         assert!(request.is_err());
-        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
     }
 }
