@@ -833,6 +833,17 @@ mod tests {
         }
     }
 
+    // Returns once `process` waits for its new start, as the thread of a restart does.
+    // The watchdog thread ends later, once the output of XMRig-Proxy closed.
+    fn wait_restart(process: &Mutex<Process>) {
+        let restarted = Instant::now();
+        while process.lock().unwrap().state != ProcessState::Waiting {
+            // Its own exit comes after 10 s, which also restarts it.
+            assert!(restarted.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     #[test]
     fn a_restart_ends_xmrig_proxy_for_its_new_start() {
         let process = not_alive(ProcessName::XmrigProxy);
@@ -844,7 +855,7 @@ mod tests {
         );
         // Holds the watchdog before its loop.
         let pub_api_lock = pub_api.lock().unwrap();
-        let watchdog = thread::spawn({
+        thread::spawn({
             let (process, gui_api, pub_api) = (
                 Arc::clone(&process),
                 Arc::clone(&gui_api),
@@ -856,11 +867,7 @@ mod tests {
         wait_start(&process);
         process.lock().unwrap().signal = ProcessSignal::Restart;
         drop(pub_api_lock);
-        let restarted = Instant::now();
-        watchdog.join().unwrap();
-        // Its own exit comes after 10 s, which also restarts it.
-        assert!(restarted.elapsed() < Duration::from_secs(5));
-        assert_eq!(process.lock().unwrap().state, ProcessState::Waiting);
+        wait_restart(&process);
         let output = &gui_api.lock().unwrap().output;
         assert!(output.contains("Exit status: [Successful]"), "{output}");
     }
