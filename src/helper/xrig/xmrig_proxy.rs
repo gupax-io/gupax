@@ -656,7 +656,7 @@ impl PubXmrigProxyApi {
         if XMRIG_REGEX.new_job.is_match(&output_parse)
             || XMRIG_REGEX.valid_conn.is_match(&output_parse)
         {
-            process.state = ProcessState::Alive;
+            process.state.set_running(ProcessState::Alive);
             // get the pool we mine on to put it on stats
             if let Some(name_pool) = detect_pool_xmrig(
                 &output_parse,
@@ -669,7 +669,7 @@ impl PubXmrigProxyApi {
             || XMRIG_REGEX.invalid_conn.is_match(&output_parse)
             || XMRIG_REGEX.error.is_match(&output_parse)
         {
-            process.state = ProcessState::NotMining;
+            process.state.set_running(ProcessState::NotMining);
             public.pool = None;
         }
         // 3. Throw away [output_parse]
@@ -872,5 +872,23 @@ mod tests {
         assert_eq!(process.lock().unwrap().state, ProcessState::Waiting);
         let output = &gui_api.lock().unwrap().output;
         assert!(output.contains("Exit status: [Successful]"), "{output}");
+    }
+
+    #[test]
+    fn xmrig_proxy_output_keeps_a_stop_in_progress() {
+        let process = not_alive(ProcessName::XmrigProxy);
+        process.lock().unwrap().state = ProcessState::Middle;
+        *process.lock().unwrap().output_parse.lock().unwrap() =
+            "[2022-02-12 12:49:30.311]  net      new job from 192.168.2.1:3333 diff 402K algo rx/0 height 2241142 (11 tx)\n".to_string();
+        PubXmrigProxyApi::update_from_output(
+            &mut PubXmrigProxyApi::new(),
+            Duration::ZERO,
+            &mut process.lock().unwrap(),
+            &not_alive(ProcessName::P2pool).lock().unwrap(),
+            &arc_mut!(ImgP2pool::new()),
+            &P2pool::default(),
+            &XmrigProxy::default(),
+        );
+        assert_eq!(process.lock().unwrap().state, ProcessState::Middle);
     }
 }
