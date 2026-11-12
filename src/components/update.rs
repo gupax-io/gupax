@@ -29,7 +29,7 @@ use crate::miscs::get_exe_dir;
 use crate::{
     app::BinariesVersion,
     disk::state::Gupax,
-    helper::{ProcessName, notification::notif},
+    helper::{Process, ProcessName, notification::notif},
 };
 use bytes::Bytes;
 use derive_more::{Deref, Display};
@@ -156,6 +156,7 @@ impl Update {
         mut gupax_settings: Gupax,
         binaries_version: BinariesVersion,
         restart: Arc<Mutex<bool>>,
+        xmrig: Arc<Mutex<Process>>,
     ) {
         let update = self.clone();
         thread::spawn(move || {
@@ -198,14 +199,11 @@ impl Update {
                 match update.spawn_update_versions(&binaries, &gupax_settings, &binaries_version) {
                     Ok(updated) => {
                         if updated {
-                            if !gupax_settings.updates.automatic_restart {
-                                notif(
-                                    "A binary has been updated, you need to restart Gupax to apply the change",
-                                );
-                                *restart.lock().unwrap() = true;
-                            } else {
-                                request_restart();
-                            }
+                            restart_after_update(
+                                gupax_settings.updates.automatic_restart,
+                                &xmrig,
+                                &restart,
+                            );
                         }
                     }
                     Err(e) => {
@@ -323,6 +321,7 @@ impl Update {
         gupax_settings: Gupax,
         binaries_version: BinariesVersion,
         restart: Arc<Mutex<bool>>,
+        xmrig: Arc<Mutex<Process>>,
     ) {
         let update = self.clone();
         thread::spawn(move || {
@@ -330,14 +329,11 @@ impl Update {
             match update.spawn_update_versions(&binaries, &gupax_settings, &binaries_version) {
                 Ok(updated) => {
                     if updated {
-                        if !gupax_settings.updates.automatic_restart {
-                            notif(
-                                "A binary has been updated, you need to restart Gupax to apply the change",
-                            );
-                            *restart.lock().unwrap() = true;
-                        } else {
-                            request_restart();
-                        }
+                        restart_after_update(
+                            gupax_settings.updates.automatic_restart,
+                            &xmrig,
+                            &restart,
+                        );
                     }
                 }
                 Err(e) => {
@@ -651,6 +647,37 @@ pub enum UpdateError {
 pub static GUPAX_REPLACED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+const RESTART_NEEDED: &str =
+    "A binary has been updated, you need to restart Gupax to apply the change";
+
+const RESTART_POSTPONED: &str = concat!(
+    "A binary has been updated, but Gupax did not restart because XMRig is running. ",
+    "Restart Gupax to apply the change."
+);
+
+// Why the user restarts Gupax after an update: the XMRig that Gupax started stops with it on
+// Windows, and keeps mining out of its reach elsewhere.
+fn restart_postponed(automatic_restart: bool, xmrig: &Process) -> Option<&'static str> {
+    if !automatic_restart {
+        Some(RESTART_NEEDED)
+    } else if xmrig.is_alive() {
+        Some(RESTART_POSTPONED)
+    } else {
+        None
+    }
+}
+
+fn restart_after_update(automatic_restart: bool, xmrig: &Mutex<Process>, restart: &Mutex<bool>) {
+    let postponed = restart_postponed(automatic_restart, &xmrig.lock().unwrap());
+    match postponed {
+        Some(reason) => {
+            notif(reason);
+            *restart.lock().unwrap() = true;
+        }
+        None => request_restart(),
+    }
+}
+
 /// Ask the main thread to restart Gupax, so it removes the tray icon first:
 /// `exit(0)` runs no destructors, and Windows keeps showing the icon of an
 /// exited process. Restart here when nothing listens.
@@ -675,4 +702,20 @@ pub fn restart_gupax() -> ! {
     crate::utils::single_instance::stop_answering();
     cmd.spawn().unwrap();
     exit(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helper::ProcessState;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_running_xmrig_postpones_the_automatic_restart() {
+        let mut xmrig = Process::new(ProcessName::Xmrig, String::new(), PathBuf::new());
+        assert_eq!(restart_postponed(true, &xmrig), None);
+        assert_eq!(restart_postponed(false, &xmrig), Some(RESTART_NEEDED));
+        xmrig.state = ProcessState::Alive;
+        assert_eq!(restart_postponed(true, &xmrig), Some(RESTART_POSTPONED));
+    }
 }
