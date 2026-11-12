@@ -236,15 +236,8 @@ impl crate::app::App {
             let start_msg = format!("Start {name}");
             let restart_msg = format!("Restart {name}");
             if process.waiting {
-                ui.add_enabled_ui(false, |ui| {
-                    ui.add_sized(size, Button::new("▶"))
-                        .on_disabled_hover_text(process.run_middle_msg());
-                    ui.add(Separator::default().grow(0.0));
-                    ui.add_sized(size, Button::new("⏹"))
-                        .on_disabled_hover_text(process.run_middle_msg());
-                    ui.add(Separator::default().grow(0.0));
-                    ui.add_sized(size, Button::new("⟲"))
-                        .on_disabled_hover_text(process.run_middle_msg());
+                waiting_actions(ui, process, size, key.is_down() && !wants_input, || {
+                    process.stop(&self.helper)
                 });
             } else if process.alive {
                 ui.add_enabled_ui(false, |ui| {
@@ -770,6 +763,89 @@ impl crate::app::App {
     }
 }
 
+// While a process starts or stops, only a cancelable start takes a Stop.
+fn waiting_actions(
+    ui: &mut Ui,
+    process: &ProcessStateGui,
+    size: [f32; 2],
+    stop_key: bool,
+    stop: impl FnOnce(),
+) {
+    ui.add_enabled_ui(false, |ui| {
+        ui.add_sized(size, Button::new("▶"))
+            .on_disabled_hover_text(process.run_middle_msg());
+    });
+    ui.add(Separator::default().grow(0.0));
+    ui.add_enabled_ui(process.cancelable, |ui| {
+        if process.cancelable && stop_key
+            || ui
+                .add_sized(size, Button::new("⏹"))
+                .on_hover_text(format!("Stop {}", process.name))
+                .on_disabled_hover_text(process.run_middle_msg())
+                .clicked()
+        {
+            stop();
+        }
+    });
+    ui.add(Separator::default().grow(0.0));
+    ui.add_enabled_ui(false, |ui| {
+        ui.add_sized(size, Button::new("⟲"))
+            .on_disabled_hover_text(process.run_middle_msg());
+    });
+}
+
 fn spacing(ui: &Ui) -> f32 {
     (ui.style().spacing.item_spacing.x + ui.style().spacing.button_padding.x) * 2.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helper::{Process, ProcessSignal};
+    use std::cell::Cell;
+    use std::path::PathBuf;
+
+    // Whether the Stop key stops `process` while it waits.
+    fn stopped_by_key(process: &Process) -> bool {
+        let process = ProcessStateGui::new(process);
+        let stopped = Cell::new(false);
+        Context::default()
+            .run_ui(RawInput::default(), |ui| {
+                waiting_actions(ui, &process, [10.0, 10.0], true, || stopped.set(true));
+            })
+            .drop_without_applying_deltas();
+        stopped.get()
+    }
+
+    fn starting(name: ProcessName) -> Process {
+        let mut process = Process::new(name, String::new(), PathBuf::new());
+        process.state = ProcessState::Middle;
+        process
+    }
+
+    #[test]
+    fn a_stop_cancels_the_start_of_xmrig() {
+        assert!(stopped_by_key(&starting(ProcessName::Xmrig)));
+    }
+
+    #[test]
+    fn a_stop_cancels_the_start_of_a_restarted_xmrig() {
+        let mut xmrig = starting(ProcessName::Xmrig);
+        xmrig.state = ProcessState::Waiting;
+        xmrig.signal = ProcessSignal::Restart;
+        xmrig.set_starting();
+        assert!(stopped_by_key(&xmrig));
+    }
+
+    #[test]
+    fn a_stop_waits_for_the_start_of_another_process() {
+        assert!(!stopped_by_key(&starting(ProcessName::P2pool)));
+    }
+
+    #[test]
+    fn a_stop_waits_for_a_stop_in_progress() {
+        let mut xmrig = starting(ProcessName::Xmrig);
+        xmrig.signal = ProcessSignal::Stop;
+        assert!(!stopped_by_key(&xmrig));
+    }
 }

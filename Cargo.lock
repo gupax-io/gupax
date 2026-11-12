@@ -2234,11 +2234,12 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 [[package]]
 name = "elevated-helper"
 version = "0.1.0"
-source = "git+https://github.com/Cyrix126/elevated-helper#ecd5c585e12aeacd270ccafc9570170fa33db74f"
+source = "git+https://github.com/Cyrix126/elevated-helper#7fdf015eb0e2164a3d48717f04272d87a9e39feb"
 dependencies = [
  "clap",
  "conpty",
  "interprocess",
+ "shell-escape",
  "windows 0.54.0",
 ]
 
@@ -3272,6 +3273,7 @@ dependencies = [
  "is_elevated",
  "jiff",
  "ksni",
+ "libc",
  "listeners",
  "local-ip-address",
  "log",
@@ -3297,6 +3299,7 @@ dependencies = [
  "serde",
  "serde-this-or-that",
  "serde_json",
+ "shell-escape",
  "static_vcruntime",
  "strip-ansi-escapes",
  "strsim",
@@ -3825,15 +3828,15 @@ dependencies = [
 
 [[package]]
 name = "interprocess"
-version = "2.4.0"
+version = "2.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6be5e5c847dbdb44564bd85294740d031f4f8aeb3464e5375ef7141f7538db69"
+checksum = "a4a4fff6c51dece332bdbf3af5fe376c49cfc8dced782725e95be0bb489e35d7"
 dependencies = [
  "doctest-file",
  "libc",
  "recvmsg",
  "widestring",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6810,6 +6813,12 @@ dependencies = [
  "digest 0.10.7",
  "keccak",
 ]
+
+[[package]]
+name = "shell-escape"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45bb67a18fa91266cc7807181f62f9178a6873bfad7dc788c42e6430db40184f"
 
 [[package]]
 name = "shlex"

@@ -1079,4 +1079,19 @@ Uptime         = 0h 2m 4s
             " * ABOUT XMRig-Proxy/6.22\nnew job from pool\nend\n"
         );
     }
+
+    #[test]
+    fn a_cancelled_start_leaves_the_process_dead() {
+        let process = signalled(ProcessSignal::Stop);
+        process.lock().unwrap().cancel_start();
+        assert_eq!(process.lock().unwrap().state, ProcessState::Dead);
+        assert_eq!(process.lock().unwrap().signal, ProcessSignal::None);
+    }
+
+    #[test]
+    fn a_stop_raised_before_a_start_is_kept() {
+        let process = signalled(ProcessSignal::Stop);
+        process.lock().unwrap().set_starting();
+        assert_eq!(process.lock().unwrap().signal, ProcessSignal::Stop);
+    }
 }

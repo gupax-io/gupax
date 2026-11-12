@@ -6,7 +6,7 @@ use crate::app::{App, AppEgui, Tab, WindowState};
 use crate::components::node::RemoteNodes;
 #[cfg(any(target_os = "windows", not(feature = "distro")))]
 use crate::errors::{ErrorButtons, ErrorFerris};
-use crate::helper::{Helper, ProcessName, ProcessState};
+use crate::helper::{Helper, Process, ProcessName, ProcessState};
 use crate::inits::init_text_styles;
 use crate::tray::QuitRequest;
 #[cfg(not(feature = "distro"))]
@@ -532,9 +532,20 @@ pub struct ProcessStateGui {
     pub state: ProcessState,
     pub alive: bool,
     pub waiting: bool,
+    // XMRig starts behind an admin prompt, which a Stop cancels.
+    pub cancelable: bool,
 }
 
 impl ProcessStateGui {
+    pub fn new(process: &Process) -> Self {
+        Self {
+            name: process.name,
+            alive: process.is_alive(),
+            waiting: process.is_waiting(),
+            cancelable: process.name == ProcessName::Xmrig && process.is_starting(),
+            state: process.state,
+        }
+    }
     pub fn run_middle_msg(&self) -> &str {
         match self.name {
             ProcessName::Node => NODE_MIDDLE,
@@ -563,13 +574,7 @@ impl ProcessStatesGui {
             &app.xmrig_proxy,
             &app.xvb,
         ] {
-            let lock = process.lock().unwrap();
-            process_states.push(ProcessStateGui {
-                name: lock.name,
-                alive: lock.is_alive(),
-                waiting: lock.is_waiting(),
-                state: lock.state,
-            });
+            process_states.push(ProcessStateGui::new(&process.lock().unwrap()));
         }
         process_states
     }

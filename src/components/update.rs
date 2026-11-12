@@ -402,6 +402,9 @@ impl Update {
                     create_dir_all(&tmp_dir)?;
                     let tmp_windows = tmp_dir + &format!("{name}.exe");
                     std::fs::rename(binary_path, tmp_windows)?;
+                    if name == "gupax" {
+                        GUPAX_REPLACED.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                 }
             }
             match extension.as_str() {
@@ -642,6 +645,11 @@ pub enum UpdateError {
     #[error(transparent)]
     ZipArchive(#[from] zip::result::ZipError),
 }
+
+// The file of this Gupax, from which it runs its elevated helper, holds another version.
+#[cfg(target_os = "windows")]
+pub static GUPAX_REPLACED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Ask the main thread to restart Gupax, so it removes the tray icon first:
 /// `exit(0)` runs no destructors, and Windows keeps showing the icon of an
