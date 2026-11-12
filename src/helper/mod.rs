@@ -280,6 +280,15 @@ pub enum ProcessState {
     OfflinePoolsAll,
 }
 
+impl ProcessState {
+    // The state that a running process reports. A stop or restart in progress keeps its own.
+    pub fn set_running(&mut self, state: ProcessState) {
+        if *self != ProcessState::Middle {
+            *self = state;
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Debug, Default)]
 pub enum ProcessSignal {
     #[default]
