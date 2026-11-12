@@ -258,9 +258,8 @@ impl Helper {
     }
     pub fn stop_xp(helper: &Arc<Mutex<Self>>) {
         info!("XMRig-Proxy | Attempting to stop...");
-        helper.lock().unwrap().xmrig_proxy.lock().unwrap().signal = ProcessSignal::Stop;
+        Process::raise(&helper.lock().unwrap().xmrig_proxy, ProcessSignal::Stop);
         info!("locked signal ok");
-        helper.lock().unwrap().xmrig_proxy.lock().unwrap().state = ProcessState::Middle;
         info!("locked state ok");
         let gui_api = Arc::clone(&helper.lock().unwrap().gui_api_xp);
         info!("clone gui ok");
@@ -280,8 +279,7 @@ impl Helper {
         path: &Path,
     ) {
         info!("XMRig-Proxy | Attempting to restart...");
-        helper.lock().unwrap().xmrig_proxy.lock().unwrap().state = ProcessState::Middle;
-        helper.lock().unwrap().xmrig_proxy.lock().unwrap().signal = ProcessSignal::Restart;
+        Process::raise(&helper.lock().unwrap().xmrig_proxy, ProcessSignal::Restart);
 
         let path = path.to_path_buf();
         // This thread lives to wait, start xmrig_proxy then die.

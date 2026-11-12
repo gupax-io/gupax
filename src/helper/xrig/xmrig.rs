@@ -136,8 +136,7 @@ impl Helper {
     // Just sets some signals for the watchdog thread to pick up on.
     pub fn stop_xmrig(helper: &Arc<Mutex<Self>>) {
         info!("XMRig | Attempting to stop...");
-        helper.lock().unwrap().xmrig.lock().unwrap().signal = ProcessSignal::Stop;
-        helper.lock().unwrap().xmrig.lock().unwrap().state = ProcessState::Middle;
+        Process::raise(&helper.lock().unwrap().xmrig, ProcessSignal::Stop);
         let gui_api = Arc::clone(&helper.lock().unwrap().gui_api_xmrig);
         let pub_api = Arc::clone(&helper.lock().unwrap().pub_api_xmrig);
         *pub_api.lock().unwrap() = PubXmrigApi::new();
@@ -156,8 +155,7 @@ impl Helper {
         path: &Path,
     ) {
         info!("XMRig | Attempting to restart...");
-        helper.lock().unwrap().xmrig.lock().unwrap().signal = ProcessSignal::Restart;
-        helper.lock().unwrap().xmrig.lock().unwrap().state = ProcessState::Middle;
+        Process::raise(&helper.lock().unwrap().xmrig, ProcessSignal::Restart);
 
         let path = path.to_path_buf();
         // This thread lives to wait, start xmrig then die.

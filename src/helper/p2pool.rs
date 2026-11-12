@@ -190,8 +190,7 @@ impl Helper {
     // Just sets some signals for the watchdog thread to pick up on.
     pub fn stop_p2pool(helper: &Arc<Mutex<Self>>) {
         info!("P2Pool | Attempting to stop...");
-        helper.lock().unwrap().p2pool.lock().unwrap().signal = ProcessSignal::Stop;
-        helper.lock().unwrap().p2pool.lock().unwrap().state = ProcessState::Middle;
+        Process::raise(&helper.lock().unwrap().p2pool, ProcessSignal::Stop);
     }
 
     #[cold]
@@ -208,8 +207,7 @@ impl Helper {
         crawler: &Arc<Mutex<Crawler>>,
     ) {
         info!("P2Pool | Attempting to restart...");
-        helper.lock().unwrap().p2pool.lock().unwrap().signal = ProcessSignal::Restart;
-        helper.lock().unwrap().p2pool.lock().unwrap().state = ProcessState::Middle;
+        Process::raise(&helper.lock().unwrap().p2pool, ProcessSignal::Restart);
 
         let helper = Arc::clone(helper);
         let state = state.clone();

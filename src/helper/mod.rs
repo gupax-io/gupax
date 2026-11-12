@@ -209,6 +209,29 @@ impl Process {
         self.state == ProcessState::Middle || self.state == ProcessState::Waiting
     }
 
+    // A signal reaches a watchdog only while the process runs, so the check and the writes share
+    // one lock. Tells whether the signal will be carried out.
+    pub fn raise(process: &Mutex<Process>, signal: ProcessSignal) -> bool {
+        let mut process = process.lock().unwrap();
+        let restart = signal == ProcessSignal::Restart;
+        // The XvB loop keeps running while its requests fail.
+        let exited = process.state == ProcessState::Dead
+            || process.state == ProcessState::Failed && process.name != ProcessName::Xvb;
+        if exited {
+            if restart {
+                process.state = ProcessState::Waiting;
+            }
+            restart
+        } else if restart && process.external {
+            // Only its owner restarts a node that Gupax did not start.
+            false
+        } else {
+            process.signal = signal;
+            process.state = ProcessState::Middle;
+            true
+        }
+    }
+
     /// Clear the signal once the child is spawned: a Restart is done by
     /// then, and a Stop raised while starting still has to be carried out.
     pub fn reset_signal_on_start(&mut self) {
