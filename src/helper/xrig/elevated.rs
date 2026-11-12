@@ -30,7 +30,11 @@ use std::process::Command;
 // in the Constrained Language Mode of locked-down PCs.
 // PowerShell then exits with the code of the helper, which is the code of XMRig, or
 // with 1 when the start failed.
+// The trap writes the reason of a failure to stdout as UTF-16 code units, which the
+// console code page of PowerShell keeps.
 const SCRIPT: &str = "$ErrorActionPreference='Stop'; \
+    trap { $e=$_.Exception; while ($e.InnerException) { $e=$e.InnerException }; \
+    ($e.Message.ToCharArray() | ForEach-Object { [int]$_ }) -join ' '; exit 1 }; \
     $p=Start-Process -FilePath ([WildcardPattern]::Escape($env:GUPAX_HELPER_EXE)) \
     -ArgumentList $env:GUPAX_HELPER_ARGS -Verb RunAs -PassThru -Wait; exit $p.ExitCode";
 
@@ -62,6 +66,25 @@ pub(super) fn command_line(args: &[String]) -> String {
         .map(|arg| shell_escape::windows::escape(arg.into()))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+// PowerShell as `powershell` runs it, minus RunAs, whose UAC prompt waits for a user, in the
+// Constrained Language Mode of locked-down PCs.
+#[cfg(all(test, target_os = "windows"))]
+pub(super) fn unelevated(gupax_exe: &Path, command_line: &str) -> Command {
+    let script = SCRIPT.replace("-Verb RunAs ", "");
+    assert_ne!(script, SCRIPT);
+    let script =
+        format!("$ExecutionContext.SessionState.LanguageMode='ConstrainedLanguage'; {script}");
+    let elevated = powershell(gupax_exe, command_line);
+    let mut cmd = Command::new(elevated.get_program());
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+    cmd.envs(
+        elevated
+            .get_envs()
+            .map(|(key, value)| (key, value.unwrap())),
+    );
+    cmd
 }
 
 pub(super) fn powershell(gupax_exe: &Path, command_line: &str) -> Command {
@@ -116,6 +139,15 @@ pub(super) fn connect(
     Ok(accept(stdout)?.map(|stdout_pipe| (stdin_pipe, stdout_pipe)))
 }
 
+// The reason that the trap of SCRIPT writes.
+fn decode_reason(units: &str) -> String {
+    let units = units
+        .split_whitespace()
+        .filter_map(|unit| unit.parse().ok())
+        .collect::<Vec<u16>>();
+    String::from_utf16_lossy(&units).trim().to_string()
+}
+
 // XMRig is started by an elevated Gupax, which relays its input and output.
 // The child is PowerShell. None on a stop.
 #[cfg(target_os = "windows")]
@@ -126,7 +158,9 @@ pub(super) fn start(
     stopped: impl Fn() -> bool,
     gupax_replaced: bool,
 ) -> io::Result<Option<(std::process::Child, Pipe, Pipe)>> {
+    use std::io::Read;
     use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
     use windows::Win32::System::Threading::CREATE_NO_WINDOW;
     // PowerShell would show its UAC prompt for a stopped XMRig.
     if stopped() {
@@ -153,6 +187,7 @@ pub(super) fn start(
         &command_line(&helper_args(xmrig, args, &stdin_name, &stdout_name)),
     );
     cmd.creation_flags(CREATE_NO_WINDOW.0);
+    cmd.stdout(Stdio::piped());
     let mut child = cmd
         .spawn()
         .map_err(|e| io::Error::new(e.kind(), format!("PowerShell could not start: {e}")))?;
@@ -163,6 +198,19 @@ pub(super) fn start(
     {
         log::warn!("XMRig | Could not kill PowerShell: {e}");
     }
+    // The stdout of PowerShell ends with it.
+    let connected = connected.map_err(|e| {
+        let mut reason = String::new();
+        if let Some(mut stdout) = child.stdout.take() {
+            let _ = stdout.read_to_string(&mut reason);
+        }
+        let reason = decode_reason(&reason);
+        if reason.is_empty() {
+            e
+        } else {
+            io::Error::new(e.kind(), format!("{e}: {reason}"))
+        }
+    });
     Ok(connected?.map(|(stdin, stdout)| (child, stdin, stdout)))
 }
 
@@ -226,6 +274,29 @@ mod tests {
         let cmd = powershell(Path::new(r"C:\Gupax\Gupax.exe"), "--elevated-helper");
         let program = Path::new(cmd.get_program());
         assert!(program.is_absolute() && program.exists(), "{program:?}");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn powershell_writes_why_the_helper_did_not_start() {
+        let output = unelevated(Path::new(r"C:\missing\Gupax.exe"), "elevated-helper")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let reason = decode_reason(&String::from_utf8(output.stdout).unwrap());
+        assert!(!reason.is_empty());
+        // .NET drops the final period of the system message.
+        assert!(
+            io::Error::from_raw_os_error(2)
+                .to_string()
+                .starts_with(&reason),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn the_reason_of_a_failure_keeps_its_characters() {
+        assert_eq!(decode_reason("74 111 32 233 13 10"), "Jo é");
     }
 
     #[cfg(target_os = "windows")]
@@ -310,6 +381,14 @@ mod tests {
             panic!("PowerShell started")
         }
 
+        fn cmd(script: &str) -> impl FnOnce(&Path, &str) -> Command {
+            move |_, _| {
+                let mut cmd = Command::new(r"C:\windows\system32\cmd.exe");
+                cmd.args(["/C", script]);
+                cmd
+            }
+        }
+
         #[test]
         fn a_stop_cancels_a_start_that_waits_for_the_uac_prompt() {
             let asked = std::cell::Cell::new(0);
@@ -347,6 +426,24 @@ mod tests {
                 error
                     .to_string()
                     .starts_with("PowerShell could not start: "),
+                "{error}"
+            );
+        }
+
+        #[test]
+        fn start_shows_why_powershell_failed() {
+            // As the trap of SCRIPT writes it.
+            let units = "The operation was canceled by the user."
+                .encode_utf16()
+                .map(|unit| unit.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let script = format!("echo {units}& exit 1");
+            let error = start_with(cmd(&script), || false, false).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .ends_with(": The operation was canceled by the user."),
                 "{error}"
             );
         }
