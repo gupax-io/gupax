@@ -36,6 +36,8 @@ use elevated_helper::interprocess::os::windows::named_pipe::{
 };
 use windows::Win32::System::Threading::DETACHED_PROCESS;
 
+use std::io::Write;
+
 type Pipe = DuplexPipeStream<Bytes>;
 
 const LIMIT: Duration = Duration::from_secs(10);
@@ -201,6 +203,49 @@ fn helper_stops_xmrig_once_gupax_is_gone() {
     drop(pipes);
     wait(&mut helper);
     assert!(!running(ping), "XMRig kept running");
+}
+
+#[test]
+fn helper_stops_xmrig_on_ctrl_c() {
+    let (mut helper, pipes) =
+        start_helper(r"C:\windows\system32\PING.EXE", &["-n", "30", "127.0.0.1"]);
+    let (mut stdin, stdout) = pipes.unwrap();
+    let ping = ping_of(&helper);
+    // Gupax stops XMRig with it.
+    stdin.write_all(&[0x03]).unwrap();
+    let output = read_output(&mut helper, stdout);
+    wait(&mut helper);
+    assert!(!output.starts_with("Error:"), "{output:?}");
+    assert!(!running(ping), "XMRig kept running");
+}
+
+#[test]
+fn helper_passes_input_to_xmrig() {
+    let (mut helper, pipes) = start_helper(
+        r"C:\windows\system32\cmd.exe",
+        &["/V:ON", "/C", "set /p x=&echo got !x!"],
+    );
+    let (mut stdin, stdout) = pipes.unwrap();
+    // As Gupax writes a command typed in the XMRig console.
+    stdin.write_all(b"h\r\n").unwrap();
+    let output = read_output(&mut helper, stdout);
+    assert!(output.contains("got h"), "{output:?}");
+}
+
+#[test]
+fn helper_runs_xmrig_below_normal_priority() {
+    let (helper, _pipes) =
+        start_helper(r"C:\windows\system32\PING.EXE", &["-n", "30", "127.0.0.1"]);
+    let ping = ping_of(&helper);
+    let priority = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command"])
+        .arg(format!("(Get-Process -Id {ping}).PriorityClass"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&priority.stdout).trim(),
+        "BelowNormal"
+    );
 }
 
 // As a helper started from a UAC prompt left open after Gupax quit.

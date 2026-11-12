@@ -1385,6 +1385,82 @@ mod tests {
         );
     }
 
+    // PowerShell starts the test binary again, which then runs as the elevated helper.
+    #[cfg(target_os = "windows")]
+    fn run_as_the_helper_when_started_with(variable: &str) {
+        use clap::Parser;
+        if std::env::var_os(variable).is_some() {
+            crate::run_elevated_helper(elevated_helper::cli::Args::parse_from(
+                std::env::args_os().skip_while(|arg| arg != "--").skip(1),
+            ));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn xmrig_starts_through_powershell_and_the_helper() {
+        use super::super::elevated::{start, unelevated};
+        const HELPER: &str = "GUPAX_TEST_HELPER";
+        const TEST: &str =
+            "helper::xrig::xmrig::tests::xmrig_starts_through_powershell_and_the_helper";
+        run_as_the_helper_when_started_with(HELPER);
+        let test = std::env::current_exe().unwrap();
+        // A hard link needs the volume of the test binary.
+        let dir = tempfile::Builder::new()
+            .prefix("Jo O'Neil [x] ")
+            .tempdir_in(test.parent().unwrap())
+            .unwrap();
+        let helper = dir.path().join("Gupax.exe");
+        std::fs::hard_link(&test, &helper).unwrap();
+        // Echoes the arguments as XMRig receives them.
+        let xmrig_exe = dir.path().join("xmrig.exe");
+        std::fs::copy(r"C:\windows\system32\cmd.exe", &xmrig_exe).unwrap();
+        let args = [
+            "/C",
+            "echo",
+            "--rig-id=Jo's rig",
+            "--cuda-devices=0,1",
+            "&",
+            "exit",
+            "3",
+        ];
+        let (powershell_run, stdin, output, status) = within(move || {
+            let (mut powershell_run, stdin, mut stdout) = start(
+                &xmrig_exe,
+                &args.map(String::from),
+                |_, command_line| {
+                    let mut cmd = unelevated(&helper, &format!("--exact {TEST} -- {command_line}"));
+                    cmd.env(HELPER, "1");
+                    cmd
+                },
+                || false,
+                false,
+            )
+            .unwrap()
+            .unwrap();
+            // The helper exits once its output was read, so the watchdog then sees
+            // PowerShell exited on its first pass.
+            let mut output = Vec::new();
+            let _ = stdout.read_to_end(&mut output);
+            let status = powershell_run.wait().unwrap();
+            (powershell_run, stdin, output, status)
+        });
+        let console = watch(
+            (
+                powershell_run,
+                Box::new(stdin),
+                Box::new(std::io::Cursor::new(output)),
+            ),
+            &xmrig(),
+        );
+        assert!(
+            console.contains(r#""--rig-id=Jo's rig" --cuda-devices=0,1"#),
+            "{console}"
+        );
+        assert!(console.contains("Exit status: [Failed]"), "{console}");
+        assert_eq!(status.code(), Some(3));
+    }
+
     // Whether pkexec, played by `script`, started XMRig, and the output of XMRig then.
     #[cfg(target_os = "linux")]
     fn prompt_answered(script: &'static str, stopped: bool) -> std::io::Result<Option<String>> {
