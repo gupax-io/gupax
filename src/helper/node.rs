@@ -374,7 +374,11 @@ impl Helper {
                                 "Node Watchdog | HTTP API request OK, attempting [update_from_priv()]"
                             );
                             if priv_api.result.synchronized && priv_api.result.status == "OK" {
-                                process.lock().unwrap().state = ProcessState::Alive
+                                process
+                                    .lock()
+                                    .unwrap()
+                                    .state
+                                    .set_running(ProcessState::Alive)
                             }
                             PubNodeApi::update_from_priv(pub_api, priv_api);
                         }

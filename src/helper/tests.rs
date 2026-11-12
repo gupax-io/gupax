@@ -980,6 +980,17 @@ Uptime         = 0h 2m 4s
     }
 
     #[test]
+    fn a_stop_in_progress_keeps_its_state() {
+        let process = signalled(ProcessSignal::Stop);
+        process
+            .lock()
+            .unwrap()
+            .state
+            .set_running(ProcessState::Alive);
+        assert_eq!(process.lock().unwrap().state, ProcessState::Middle);
+    }
+
+    #[test]
     fn lines_after_a_line_in_another_encoding_are_read() {
         let lines = text_lines(b"data dir C:\\Jos\xe9\r\nlast\n".as_slice())
             .map(Result::unwrap)
