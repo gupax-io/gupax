@@ -87,32 +87,13 @@ impl Helper {
         proxy_img: &Arc<Mutex<ImgProxy>>,
         proxy_state: &XmrigProxy,
     ) {
-        let mut i = 0;
         let mut lines = crate::helper::text_lines(&mut reader);
-        // Run a ANSI escape sequence filter for the first few lines.
+        // XMRig writes why it cannot start before its banner.
         while let Some(Ok(line)) = lines.next() {
             let line = strip_ansi_escapes::strip_str(line);
-            // skip until the first line of xmrig is appearing, hiding automatic input of gupax
-            if i == 0 && !line.contains("ABOUT") {
-                continue;
-            }
-            if i == 0 && line.contains("ABOUT") {
+            if line.contains("ABOUT") {
                 info!("Xmrig is started");
             }
-            if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
-                error!("XMRig PTY Parse | Output error: {e}");
-            }
-            if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
-                error!("XMRig PTY Pub | Output error: {e}");
-            }
-            if i > 7 {
-                break;
-            } else {
-                i += 1;
-            }
-        }
-
-        while let Some(Ok(line)) = lines.next() {
             // need to verify if pool still working
             // for that need to catch "connect error"
             // only check if xvb process is used and xmrig-proxy is not.
@@ -1130,5 +1111,29 @@ mod tests {
             &P2pool::default(),
         );
         assert_eq!(process.lock().unwrap().state, ProcessState::Middle);
+    }
+
+    #[test]
+    fn xmrig_lines_before_its_banner_are_shown() {
+        let output_pub = arc_mut!(String::new());
+        Helper::read_pty_xmrig(
+            arc_mut!(String::new()),
+            Arc::clone(&output_pub),
+            Box::new(std::io::Cursor::new(
+                "Error: C:\\XMRig\\xmrig.exe: not found\r\n * ABOUT XMRig/6.22\r\n",
+            )),
+            not_alive(ProcessName::Xvb),
+            not_alive(ProcessName::XmrigProxy),
+            not_alive(ProcessName::P2pool),
+            &arc_mut!(PubXvbApi::new()),
+            &P2pool::default(),
+            &arc_mut!(ImgP2pool::new()),
+            &arc_mut!(ImgProxy::new()),
+            &XmrigProxy::default(),
+        );
+        assert_eq!(
+            *output_pub.lock().unwrap(),
+            "Error: C:\\XMRig\\xmrig.exe: not found\n * ABOUT XMRig/6.22\n"
+        );
     }
 }
