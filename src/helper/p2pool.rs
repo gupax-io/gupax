@@ -53,7 +53,6 @@ use crate::{
 use enclose::enc;
 use log::*;
 use serde::{Deserialize, Serialize};
-use std::io::PipeReader;
 use std::io::Write as IoWrite;
 use std::mem;
 use std::path::Path;
@@ -72,7 +71,7 @@ impl Helper {
     fn read_pty_p2pool(
         output_parse: Arc<Mutex<String>>,
         output_pub: Arc<Mutex<String>>,
-        reader: PipeReader,
+        reader: Box<dyn std::io::Read + Send>,
         gupax_p2pool_api: Arc<Mutex<GupaxP2poolApi>>,
         gui_api: Arc<Mutex<PubP2poolApi>>,
     ) {
@@ -650,6 +649,7 @@ impl Helper {
         gupax_p2pool_api: Arc<Mutex<GupaxP2poolApi>>,
         node: NodeString,
     ) {
+        process.lock().unwrap().clear_output();
         // 1a. Create PTY
         let mut cmd = Command::new(&path);
         #[cfg(target_os = "windows")]
@@ -662,14 +662,13 @@ impl Helper {
         crate::helper::run_in_folder_of(&mut cmd, &path);
         // 1c. Create child
         debug!("P2Pool | Creating child...");
-        let Some((child_pty, stdin_writer, stdout_reader)) = crate::helper::started(
+        let Some((mut child_pty, stdin_writer, stdout_reader)) = crate::helper::started(
             crate::helper::spawn_piped(cmd),
             &mut process.lock().unwrap(),
             &mut gui_api.lock().unwrap().output,
         ) else {
             return;
         };
-        let child_pty = Arc::new(Mutex::new(child_pty));
 
         // 2. Set process state
         debug!("P2Pool | Setting process state...");
@@ -686,11 +685,12 @@ impl Helper {
         let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
         let gupax_p2pool_api_c = Arc::clone(&gupax_p2pool_api);
         let p2pool_api_c = Arc::clone(&gui_api);
+        let (stdout, output_end) = crate::helper::output(Box::new(stdout_reader));
         tokio::spawn(async move {
             Self::read_pty_p2pool(
                 output_parse,
                 output_pub,
-                stdout_reader,
+                stdout,
                 gupax_p2pool_api_c,
                 p2pool_api_c,
             );
@@ -751,20 +751,24 @@ impl Helper {
                 gui_api.lock().unwrap().tick = (last_p2pool_request.elapsed().as_secs() % 60) as u8;
                 // Check if the process is secretly died without us knowing :)
                 if check_died(
-                    &child_pty,
-                    &mut process.lock().unwrap(),
+                    &mut child_pty,
+                    &output_end,
+                    &process,
                     &start,
-                    &mut gui_api.lock().unwrap().output,
+                    &gui_api,
+                    &pub_api,
                 ) {
                     break;
                 }
 
                 // Check SIGNAL
                 if signal_end(
-                    &mut process.lock().unwrap(),
-                    Some(&child_pty),
+                    &process,
+                    Some(&mut child_pty),
+                    &output_end,
                     &start,
-                    &mut gui_api.lock().unwrap().output,
+                    &gui_api,
+                    &pub_api,
                 ) {
                     break;
                 }
@@ -1638,4 +1642,42 @@ fn reset_data_p2pool(pub_api: &Arc<Mutex<PubP2poolApi>>, gui_api: &Arc<Mutex<Pub
     *gui_api.lock().unwrap() = PubP2poolApi::new();
     // to keep the value modified by xmrig even if xvb is dead.
     pub_api.lock().unwrap().prefer_local_node = current_pref;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helper::{not_alive, shell};
+    use crate::utils::macros::arc_mut;
+
+    #[test]
+    fn last_lines_of_p2pool_come_before_its_exit_status() {
+        let gui_api = arc_mut!(PubP2poolApi::new());
+        let (path, args) = shell(
+            "echo first& <nul set /p =last& exit 1",
+            "echo first; printf last; exit 1",
+        );
+        // Its API files are in a temporary folder.
+        let dir = tempfile::tempdir().unwrap();
+        Helper::spawn_p2pool_watchdog(
+            not_alive(ProcessName::P2pool),
+            Arc::clone(&gui_api),
+            arc_mut!(PubP2poolApi::new()),
+            args,
+            path,
+            dir.path().join("local"),
+            dir.path().join("network"),
+            dir.path().join("pool"),
+            dir.path().join("p2p"),
+            arc_mut!(GupaxP2poolApi::new()),
+            NodeString {
+                ip: String::new(),
+                rpc: String::new(),
+                zmq: String::new(),
+            },
+        );
+        let output = &gui_api.lock().unwrap().output;
+        let last = output.find("last").expect(output);
+        assert!(output[last..].contains("Exit status: [Failed]"), "{output}");
+    }
 }

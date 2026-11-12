@@ -22,7 +22,6 @@ use readable::byte::Byte;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::PipeReader,
     net::{SocketAddr, ToSocketAddrs},
     path::Path,
     process::Command,
@@ -53,7 +52,7 @@ impl Helper {
     fn read_pty_node(
         output_parse: Arc<Mutex<String>>,
         output_pub: Arc<Mutex<String>>,
-        reader: PipeReader,
+        reader: Box<dyn std::io::Read + Send>,
     ) {
         use std::io::BufRead;
         let mut stdout = std::io::BufReader::new(reader).lines();
@@ -255,12 +254,15 @@ impl Helper {
         img: ImgNode,
     ) {
         process.lock().unwrap().start = Instant::now();
+        process.lock().unwrap().clear_output();
         process.lock().unwrap().external = ports_detected_local_node.is_some();
         // spawn pty if we are starting it from gupax
         debug!("Node | Creating PTY...");
         let mut child_pty = None;
         let mut output_pub = None;
         let mut stdin: Option<Box<dyn IoWrite + Send>> = None;
+        // A node that Gupax did not start has no output.
+        let mut output_end = crate::helper::ended_output();
         if ports_detected_local_node.is_none() {
             // 4. Spawn PTY read thread
             debug!("Node | Spawning PTY read thread...");
@@ -294,7 +296,9 @@ impl Helper {
             ) else {
                 return;
             };
-            child_pty = Some(Arc::new(Mutex::new(child)));
+            child_pty = Some(child);
+            let (stdout_reader, end) = crate::helper::output(Box::new(stdout_reader));
+            output_end = end;
             stdin = Some(Box::new(stdin_writer));
             spawn(enc!((output_parse, output_pub) async move {
                 Self::read_pty_node(output_parse, output_pub.unwrap(), stdout_reader);
@@ -316,13 +320,10 @@ impl Helper {
             {
                 // scope to drop locked mutex before the sleep
                 // check state
-                let died = match &child_pty {
-                    Some(child) => check_died(
-                        child,
-                        &mut process.lock().unwrap(),
-                        &start,
-                        &mut gui_api.lock().unwrap().output,
-                    ),
+                let died = match &mut child_pty {
+                    Some(child) => {
+                        check_died(child, &output_end, process, &start, gui_api, pub_api)
+                    }
                     None => check_died_process(
                         &mut process.lock().unwrap(),
                         &start,
@@ -336,10 +337,12 @@ impl Helper {
                 // check signal
                 // if needed, kill by the pid
                 if signal_end(
-                    &mut process.lock().unwrap(),
-                    child_pty.as_ref(),
+                    process,
+                    child_pty.as_mut(),
+                    &output_end,
                     &start,
-                    &mut gui_api.lock().unwrap().output,
+                    gui_api,
+                    pub_api,
                 ) {
                     break;
                 }
@@ -631,4 +634,63 @@ pub enum CheckLocalOutsideNode {
     Valid(u16, u16),
     NonValid,
     None,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helper::{not_alive, shell};
+    use crate::utils::macros::arc_mut;
+    use std::path::PathBuf;
+
+    // Runs the watchdog of `process` until the node ends.
+    fn watch(
+        process: &Arc<Mutex<Process>>,
+        gui_api: &Arc<Mutex<PubNodeApi>>,
+        (path, args): (PathBuf, Vec<String>),
+    ) {
+        let state = Node::default();
+        Helper::spawn_node_watchdog(
+            process,
+            gui_api,
+            &arc_mut!(PubNodeApi::new()),
+            args,
+            path,
+            state.clone(),
+            None,
+            &arc_mut!(System::new()),
+            ImgNode::new(&state, &StartOptionsMode::Simple),
+        );
+    }
+
+    #[test]
+    fn last_lines_of_the_node_come_before_its_exit_status() {
+        let gui_api = arc_mut!(PubNodeApi::new());
+        watch(
+            &not_alive(ProcessName::Node),
+            &gui_api,
+            shell(
+                "echo first& <nul set /p =last& exit 1",
+                "echo first; printf last; exit 1",
+            ),
+        );
+        let output = &gui_api.lock().unwrap().output;
+        let last = output.find("last").expect(output);
+        assert!(output[last..].contains("Exit status: [Failed]"), "{output}");
+    }
+
+    #[test]
+    fn a_run_starts_without_the_output_of_the_previous_one() {
+        let process = not_alive(ProcessName::Node);
+        *process.lock().unwrap().output_pub.lock().unwrap() = "previous\n".to_string();
+        *process.lock().unwrap().output_parse.lock().unwrap() = "previous\n".to_string();
+        watch(
+            &process,
+            &arc_mut!(PubNodeApi::new()),
+            (PathBuf::from("/"), Vec::new()),
+        );
+        let process = process.lock().unwrap();
+        assert!(process.output_pub.lock().unwrap().is_empty());
+        assert!(process.output_parse.lock().unwrap().is_empty());
+    }
 }
