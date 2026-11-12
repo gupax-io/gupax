@@ -179,6 +179,10 @@ fn datetimeonsole() -> String {
 pub fn client() -> ClientWithMiddleware {
     client_with(reqwest::Client::new())
 }
+// The API of a process that Gupax watches, whose watchdog asks again at its next pass.
+pub fn local_client() -> ClientWithMiddleware {
+    reqwest::Client::new().into()
+}
 // Adds retries to [client].
 pub fn client_with(client: reqwest::Client) -> ClientWithMiddleware {
     reqwest_middleware::ClientBuilder::new(client)
