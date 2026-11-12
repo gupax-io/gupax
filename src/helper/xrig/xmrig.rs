@@ -32,6 +32,24 @@ use super::Hashrate;
 use super::xmrig_proxy::ImgProxy;
 use std::process::{Child, Command, ExitStatus};
 
+// What the XMRig watchdog works on, from its start to its end.
+struct XmrigWatch {
+    process: Arc<Mutex<Process>>,
+    gui_api: Arc<Mutex<PubXmrigApi>>,
+    pub_api: Arc<Mutex<PubXmrigApi>>,
+    api_ip_port: String,
+    token: String,
+    process_xvb: Arc<Mutex<Process>>,
+    process_xp: Arc<Mutex<Process>>,
+    process_p2pool: Arc<Mutex<Process>>,
+    pub_api_xvb: Arc<Mutex<PubXvbApi>>,
+    p2pool_state: P2pool,
+    p2pool_img: Arc<Mutex<ImgP2pool>>,
+    proxy_state: XmrigProxy,
+    proxy_img: Arc<Mutex<ImgProxy>>,
+    xmrig_img: Arc<Mutex<ImgXmrig>>,
+}
+
 // XMRig runs with rights that Gupax lacks to kill it.
 struct XmrigChild {
     child: Child,
@@ -218,26 +236,23 @@ impl Helper {
         let proxy_img = Arc::clone(&helper.lock().unwrap().img_proxy);
         let xmrig_img = Arc::clone(&helper.lock().unwrap().img_xmrig);
         let pub_api_xvb = Arc::clone(&helper.lock().unwrap().pub_api_xvb);
-        thread::spawn(move || {
-            Self::spawn_xmrig_watchdog(
-                process,
-                gui_api,
-                pub_api,
-                args,
-                path,
-                api_ip_port,
-                &token,
-                process_xvb,
-                process_xp,
-                process_p2pool,
-                &pub_api_xvb,
-                &p2pool_state,
-                &p2pool_img,
-                &proxy_state,
-                &proxy_img,
-                xmrig_img,
-            );
-        });
+        let watch = XmrigWatch {
+            process,
+            gui_api,
+            pub_api,
+            api_ip_port,
+            token,
+            process_xvb,
+            process_xp,
+            process_p2pool,
+            pub_api_xvb,
+            p2pool_state,
+            p2pool_img,
+            proxy_state,
+            proxy_img,
+            xmrig_img,
+        };
+        thread::spawn(move || Self::spawn_xmrig_watchdog(watch, args, path));
     }
     pub fn mutate_img_xmrig(
         helper: &Arc<Mutex<Self>>,
@@ -497,26 +512,7 @@ impl Helper {
     // The XMRig watchdog. Spawns 1 OS thread for reading a PTY (STDOUT+STDERR), and combines the [Child] with a PTY so STDIN actually works.
     // This isn't actually async, a tokio runtime is unfortunately needed because [Hyper] is an async library (HTTP API calls)
     #[tokio::main]
-    #[allow(clippy::await_holding_lock)]
-    #[allow(clippy::too_many_arguments)]
-    async fn spawn_xmrig_watchdog(
-        process: Arc<Mutex<Process>>,
-        gui_api: Arc<Mutex<PubXmrigApi>>,
-        pub_api: Arc<Mutex<PubXmrigApi>>,
-        args: Vec<String>,
-        path: PathBuf,
-        mut api_ip_port: String,
-        token: &str,
-        process_xvb: Arc<Mutex<Process>>,
-        process_xp: Arc<Mutex<Process>>,
-        process_p2pool: Arc<Mutex<Process>>,
-        pub_api_xvb: &Arc<Mutex<PubXvbApi>>,
-        p2pool_state: &P2pool,
-        p2pool_img: &Arc<Mutex<ImgP2pool>>,
-        proxy_state: &XmrigProxy,
-        proxy_img: &Arc<Mutex<ImgProxy>>,
-        xmrig_img: Arc<Mutex<ImgXmrig>>,
-    ) {
+    async fn spawn_xmrig_watchdog(watch: XmrigWatch, args: Vec<String>, path: PathBuf) {
         cfg_if! {
             if #[cfg(windows)] {
 
@@ -582,11 +578,37 @@ impl Helper {
 
             }        }
 
+        Self::watch_xmrig(child_pty, stdin, stdout, watch).await;
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    async fn watch_xmrig(
+        child_pty: Child,
+        stdin: impl IoWrite + Send + 'static,
+        stdout: impl std::io::Read + Send + 'static,
+        watch: XmrigWatch,
+    ) {
+        let XmrigWatch {
+            process,
+            gui_api,
+            pub_api,
+            mut api_ip_port,
+            ref token,
+            process_xvb,
+            process_xp,
+            process_p2pool,
+            ref pub_api_xvb,
+            ref p2pool_state,
+            ref p2pool_img,
+            ref proxy_state,
+            ref proxy_img,
+            xmrig_img,
+        } = watch;
         let mut xmrig = XmrigChild {
             child: child_pty,
-            stdin,
+            stdin: Box::new(stdin),
         };
-        let (stdout, output_end) = output(stdout);
+        let (stdout, output_end) = output(Box::new(stdout));
 
         debug!("XMRig | Clearing GUI output...");
         gui_api.lock().unwrap().output.clear();
@@ -976,3 +998,119 @@ struct Connection {
 //             .unwrap_or(XMRIG_API_PORT_DEFAULT);
 //     }
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helper::{not_alive, shell_command, within};
+    use crate::utils::macros::arc_mut;
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+
+    fn xmrig() -> Arc<Mutex<Process>> {
+        let process = not_alive(ProcessName::Xmrig);
+        process.lock().unwrap().state = ProcessState::Alive;
+        process
+    }
+
+    type StandIn = (Child, Box<dyn IoWrite + Send>, Box<dyn Read + Send>);
+
+    // Plays XMRig, with its input and output piped.
+    fn stand_in(mut cmd: Command) -> StandIn {
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let (stdin, stdout) = (child.stdin.take().unwrap(), child.stdout.take().unwrap());
+        (child, Box::new(stdin), Box::new(stdout))
+    }
+
+    // A stand-in that exited once it ran `script`.
+    fn exited(script: &str) -> StandIn {
+        let mut xmrig_run = stand_in(shell_command(script, script));
+        xmrig_run.0.wait().unwrap();
+        xmrig_run
+    }
+
+    // Returns the console output once the watchdog loop of `process` ended.
+    fn watch((child, stdin, stdout): StandIn, process: &Arc<Mutex<Process>>) -> String {
+        let gui_api = arc_mut!(PubXmrigApi::new());
+        let watch = XmrigWatch {
+            process: Arc::clone(process),
+            gui_api: Arc::clone(&gui_api),
+            pub_api: arc_mut!(PubXmrigApi::new()),
+            api_ip_port: String::new(),
+            token: String::new(),
+            process_xvb: not_alive(ProcessName::Xvb),
+            process_xp: not_alive(ProcessName::XmrigProxy),
+            process_p2pool: not_alive(ProcessName::P2pool),
+            pub_api_xvb: arc_mut!(PubXvbApi::new()),
+            p2pool_state: P2pool::default(),
+            p2pool_img: arc_mut!(ImgP2pool::new()),
+            proxy_state: XmrigProxy::default(),
+            proxy_img: arc_mut!(ImgProxy::new()),
+            xmrig_img: arc_mut!(ImgXmrig::new()),
+        };
+        within(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(Helper::watch_xmrig(child, stdin, stdout, watch))
+        });
+        gui_api.lock().unwrap().output.clone()
+    }
+
+    // Tells whether the XMRig reader reads from a thread of the watchdog's runtime.
+    struct RuntimeProbe(mpsc::Sender<bool>);
+
+    impl Read for RuntimeProbe {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            let _ = self.0.send(tokio::runtime::Handle::try_current().is_ok());
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn xmrig_reader_runs_apart_from_the_watchdog_runtime() {
+        let (sender, on_runtime) = mpsc::channel();
+        let (xmrig_run, stdin, _) = exited("exit 3");
+        watch((xmrig_run, stdin, Box::new(RuntimeProbe(sender))), &xmrig());
+        assert!(!on_runtime.recv_timeout(Duration::from_secs(5)).unwrap());
+    }
+
+    // Exits once it reads the Ctrl+C of the watchdog.
+    #[cfg(windows)]
+    fn until_ctrl_c() -> Command {
+        let mut cmd = Command::new("powershell");
+        cmd.args(["-NoProfile", "-Command", "[void][Console]::In.Read()"]);
+        cmd
+    }
+
+    #[cfg(unix)]
+    fn until_ctrl_c() -> Command {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "dd bs=1 count=1 >/dev/null 2>&1"]);
+        cmd
+    }
+
+    #[test]
+    fn watchdog_stops_xmrig_on_its_stop_signal() {
+        let process = xmrig();
+        process.lock().unwrap().signal = ProcessSignal::Stop;
+        let output = watch(stand_in(until_ctrl_c()), &process);
+        assert!(output.contains("XMRig stopped"), "{output}");
+        assert_eq!(process.lock().unwrap().state, ProcessState::Dead);
+    }
+
+    #[test]
+    fn watchdog_shows_the_last_lines_of_xmrig_before_its_exit_status() {
+        let process = xmrig();
+        let output = watch(exited("echo ABOUT XMRig && exit 3"), &process);
+        let exit = output.find("Exit status: [Failed]").expect(&output);
+        assert!(output[..exit].contains("ABOUT XMRig"), "{output}");
+        assert_eq!(process.lock().unwrap().state, ProcessState::Failed);
+    }
+}
