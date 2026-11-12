@@ -1316,8 +1316,7 @@ dependencies = [
 [[package]]
 name = "conpty"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b64e80ea07c05b0216af7d81e1bba05060bf8eda00bfbcbae41ceb5d26b4c783"
+source = "git+https://github.com/Cyrix126/conpty#33d0a7f8b8942ba4f0bdd72b3ea2398c8cb17d23"
 dependencies = [
  "windows 0.54.0",
 ]

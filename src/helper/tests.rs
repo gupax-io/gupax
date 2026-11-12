@@ -642,4 +642,58 @@ Uptime         = 0h 2m 4s
             args(&["--mini"])
         );
     }
+
+    use crate::helper::{
+        ProcessSignal, not_alive, run_in_folder_of, shell_command, spawn_piped, started, within,
+    };
+    use std::io::Read;
+    use std::process::Command;
+
+    #[test]
+    fn a_process_that_could_not_start_shows_why() {
+        let process = not_alive(ProcessName::P2pool);
+        process.lock().unwrap().signal = ProcessSignal::Restart;
+        let mut gui_output = String::new();
+        let start = spawn_piped(Command::new("/missing/p2pool"));
+        assert!(started(start, &mut process.lock().unwrap(), &mut gui_output).is_none());
+        assert_eq!(process.lock().unwrap().state, ProcessState::Failed);
+        assert_eq!(process.lock().unwrap().signal, ProcessSignal::None);
+        assert!(
+            gui_output.contains("P2pool could not start.\nError: /missing/p2pool: "),
+            "{gui_output}"
+        );
+    }
+
+    #[test]
+    fn a_binary_at_the_root_runs_in_no_folder() {
+        let mut cmd = Command::new("/");
+        run_in_folder_of(&mut cmd, Path::new("/"));
+        assert_eq!(cmd.get_current_dir(), None);
+    }
+
+    // What `cmd` wrote once its output ended.
+    fn output_of(cmd: Command) -> String {
+        let (mut child, _stdin, mut stdout) = spawn_piped(cmd).unwrap();
+        let output = within(move || {
+            let mut output = String::new();
+            stdout.read_to_string(&mut output).unwrap();
+            output
+        });
+        child.wait().unwrap();
+        output
+    }
+
+    #[test]
+    fn the_output_of_a_process_ends_with_it() {
+        assert_eq!(
+            output_of(shell_command("echo last", "echo last")).trim_end(),
+            "last"
+        );
+    }
+
+    #[test]
+    fn errors_of_a_process_reach_its_output() {
+        let cmd = shell_command("echo err 1>&2", "echo err >&2");
+        assert_eq!(output_of(cmd).trim_end(), "err");
+    }
 }

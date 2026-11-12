@@ -25,7 +25,7 @@ use std::{
     io::PipeReader,
     net::{SocketAddr, ToSocketAddrs},
     path::Path,
-    process::{Command, Stdio},
+    process::Command,
     sync::{Arc, Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
@@ -261,8 +261,6 @@ impl Helper {
         let mut child_pty = None;
         let mut output_pub = None;
         let mut stdin: Option<Box<dyn IoWrite + Send>> = None;
-        let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
-        let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
         if ports_detected_local_node.is_none() {
             // 4. Spawn PTY read thread
             debug!("Node | Spawning PTY read thread...");
@@ -275,8 +273,6 @@ impl Helper {
             use std::os::windows::process::CommandExt;
             #[cfg(target_os = "windows")]
             cmd.creation_flags(0x08000000);
-            cmd.stdin(Stdio::from(stdin_reader));
-            cmd.stdout(Stdio::from(stdout_writer));
             cmd.args(args);
             // if in simple state and enough free memory, enable full memory env
             if state.simple {
@@ -288,10 +284,17 @@ impl Helper {
             } else if state.full_memory {
                 cmd.env("MONERO_RANDOMX_FULL_MEM", "1");
             }
-            cmd.current_dir(path.as_path().parent().unwrap());
+            crate::helper::run_in_folder_of(&mut cmd, &path);
             // 1c. Create child
             debug!("Node | Creating child...");
-            child_pty = Some(Arc::new(Mutex::new(cmd.spawn().unwrap())));
+            let Some((child, stdin_writer, stdout_reader)) = crate::helper::started(
+                crate::helper::spawn_piped(cmd),
+                &mut process.lock().unwrap(),
+                &mut gui_api.lock().unwrap().output,
+            ) else {
+                return;
+            };
+            child_pty = Some(Arc::new(Mutex::new(child)));
             stdin = Some(Box::new(stdin_writer));
             spawn(enc!((output_parse, output_pub) async move {
                 Self::read_pty_node(output_parse, output_pub.unwrap(), stdout_reader);
