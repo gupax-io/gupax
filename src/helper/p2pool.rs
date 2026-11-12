@@ -75,8 +75,7 @@ impl Helper {
         gupax_p2pool_api: Arc<Mutex<GupaxP2poolApi>>,
         gui_api: Arc<Mutex<PubP2poolApi>>,
     ) {
-        use std::io::BufRead;
-        let mut stdout = std::io::BufReader::new(reader).lines();
+        let mut stdout = crate::helper::text_lines(reader);
 
         // Run a ANSI escape sequence filter for the first few lines.
         let mut i = 0;

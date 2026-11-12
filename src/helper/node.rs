@@ -54,8 +54,7 @@ impl Helper {
         output_pub: Arc<Mutex<String>>,
         reader: Box<dyn std::io::Read + Send>,
     ) {
-        use std::io::BufRead;
-        let mut stdout = std::io::BufReader::new(reader).lines();
+        let mut stdout = crate::helper::text_lines(reader);
 
         // Run a ANSI escape sequence filter.
         while let Some(Ok(line)) = stdout.next() {
@@ -65,14 +64,6 @@ impl Helper {
             }
             if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
                 error!("Node PTY Pub | Output error: {e}");
-            }
-        }
-        while let Some(Ok(line)) = stdout.next() {
-            if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
-                error!("P2Pool PTY Parse | Output error: {e}");
-            }
-            if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
-                error!("P2Pool PTY Pub | Output error: {e}");
             }
         }
     }
