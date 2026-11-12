@@ -643,11 +643,16 @@ Uptime         = 0h 2m 4s
         );
     }
 
+    use crate::helper::p2pool::PubP2poolApi;
     use crate::helper::{
-        ProcessSignal, not_alive, run_in_folder_of, shell_command, spawn_piped, started, within,
+        ProcessSignal, check_died, ended_output, exited, not_alive, output, run_in_folder_of,
+        shell_command, signal_end, sleeping, spawn_piped, started, within,
     };
-    use std::io::Read;
+    use crate::utils::constants::HORI_CONSOLE;
+    use std::io::{BufRead, Read, Write};
     use std::process::Command;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     #[test]
     fn a_process_that_could_not_start_shows_why() {
@@ -695,5 +700,238 @@ Uptime         = 0h 2m 4s
     fn errors_of_a_process_reach_its_output() {
         let cmd = shell_command("echo err 1>&2", "echo err >&2");
         assert_eq!(output_of(cmd).trim_end(), "err");
+    }
+
+    fn api() -> Mutex<PubP2poolApi> {
+        Mutex::new(PubP2poolApi::new())
+    }
+
+    #[test]
+    fn a_run_ends_its_console_with_its_name_uptime_and_exit_status() {
+        let gui_api = api();
+        assert!(check_died(
+            &mut exited(0),
+            &ended_output(),
+            &not_alive(ProcessName::Xmrig),
+            &(Instant::now() - Duration::from_secs(61)),
+            &gui_api,
+            &api(),
+        ));
+        assert_eq!(
+            gui_api.lock().unwrap().output,
+            format!(
+                "{HORI_CONSOLE}\nXMRig stopped | Uptime: [1 minute, 1 second] | Exit status: [Successful]\n{HORI_CONSOLE}\n\n\n\n\n"
+            )
+        );
+    }
+
+    #[test]
+    fn last_lines_of_a_process_come_before_its_exit_status() {
+        let process = not_alive(ProcessName::P2pool);
+        process.lock().unwrap().state = ProcessState::Alive;
+        *process.lock().unwrap().output_pub.lock().unwrap() = "read\n".to_string();
+        let (gui_api, pub_api) = (api(), api());
+        gui_api.lock().unwrap().output = "start\n".to_string();
+        pub_api.lock().unwrap().output = "combined\n".to_string();
+        assert!(check_died(
+            &mut exited(1),
+            &ended_output(),
+            &process,
+            &Instant::now(),
+            &gui_api,
+            &pub_api,
+        ));
+        let gui_output = &gui_api.lock().unwrap().output;
+        assert!(
+            gui_output.starts_with(&format!(
+                "start\ncombined\nread\n{HORI_CONSOLE}\nP2pool stopped | "
+            )),
+            "{gui_output}"
+        );
+        assert!(gui_output.contains("Exit status: [Failed]"), "{gui_output}");
+        assert_eq!(process.lock().unwrap().state, ProcessState::Failed);
+    }
+
+    // A process that its watchdog has to end.
+    fn signalled(signal: ProcessSignal) -> Arc<Mutex<Process>> {
+        let process = not_alive(ProcessName::P2pool);
+        process.lock().unwrap().state = ProcessState::Middle;
+        process.lock().unwrap().signal = signal;
+        process
+    }
+
+    #[test]
+    fn a_stopped_process_shows_its_last_lines() {
+        let process = signalled(ProcessSignal::Stop);
+        *process.lock().unwrap().output_pub.lock().unwrap() = "last\n".to_string();
+        let (gui_api, pub_api) = (api(), api());
+        pub_api.lock().unwrap().output = "earlier\n".to_string();
+        assert!(signal_end(
+            &process,
+            Some(&mut exited(0)),
+            &ended_output(),
+            &Instant::now(),
+            &gui_api,
+            &pub_api,
+        ));
+        let gui_output = &gui_api.lock().unwrap().output;
+        assert!(gui_output.starts_with("earlier\nlast\n"), "{gui_output}");
+    }
+
+    // Stores the lines of `stdout` as the reader of a watchdog does, and returns once `until` is
+    // stored.
+    fn read_until(stdout: Box<dyn Read + Send>, process: &Mutex<Process>, until: &str) {
+        let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
+        std::thread::spawn({
+            let output_pub = Arc::clone(&output_pub);
+            move || {
+                for line in std::io::BufReader::new(stdout).lines() {
+                    output_pub.lock().unwrap().push_str(&(line.unwrap() + "\n"));
+                }
+            }
+        });
+        let reading = Instant::now();
+        while !output_pub.lock().unwrap().contains(until) {
+            assert!(
+                reading.elapsed() < Duration::from_secs(5),
+                "{until:?} not read"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stopped_process_shows_a_last_line_cut_before_its_newline() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "echo first; printf last; exec sleep 30"]);
+        let (mut child, _stdin, stdout) = spawn_piped(cmd).unwrap();
+        let (stdout, output_end) = output(Box::new(stdout));
+        let process = signalled(ProcessSignal::Stop);
+        read_until(stdout, &process, "first");
+        let gui_api = api();
+        assert!(signal_end(
+            &process,
+            Some(&mut child),
+            &output_end,
+            &Instant::now(),
+            &gui_api,
+            &api(),
+        ));
+        let gui_output = &gui_api.lock().unwrap().output;
+        assert!(gui_output.starts_with("first\nlast\n"), "{gui_output}");
+    }
+
+    #[test]
+    fn lines_written_to_a_log_after_its_end_was_read_are_shown() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("xmrig_output");
+        std::fs::write(&log, "first\n").unwrap();
+        let (stdout, output_end) = output(Box::new(std::fs::File::open(&log).unwrap()));
+        let process = not_alive(ProcessName::P2pool);
+        read_until(stdout, &process, "first");
+        // As XMRig writes to its macOS log, where a killed XMRig leaves its last line without a
+        // newline.
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&log)
+            .unwrap()
+            .write_all(b"last")
+            .unwrap();
+        let gui_api = api();
+        assert!(check_died(
+            &mut exited(0),
+            &output_end,
+            &process,
+            &Instant::now(),
+            &gui_api,
+            &api(),
+        ));
+        let gui_output = &gui_api.lock().unwrap().output;
+        assert!(gui_output.starts_with("first\nlast\n"), "{gui_output}");
+    }
+
+    #[test]
+    fn exit_status_waits_for_a_stuck_reader_until_the_limit() {
+        let (_stdout, output_end) = output(Box::new(std::io::empty()));
+        let waiting = Instant::now();
+        within(move || output_end.wait(Duration::from_millis(10)));
+        assert!(waiting.elapsed() >= Duration::from_millis(10));
+    }
+
+    #[test]
+    fn a_stopped_process_stops_successfully() {
+        let mut child = sleeping();
+        let process = signalled(ProcessSignal::Stop);
+        let gui_api = api();
+        assert!(signal_end(
+            &process,
+            Some(&mut child),
+            &ended_output(),
+            &Instant::now(),
+            &gui_api,
+            &api(),
+        ));
+        assert_eq!(process.lock().unwrap().state, ProcessState::Dead);
+        assert_eq!(process.lock().unwrap().signal, ProcessSignal::None);
+        let gui_output = &gui_api.lock().unwrap().output;
+        assert!(
+            gui_output.contains("Exit status: [Successful]"),
+            "{gui_output}"
+        );
+    }
+
+    #[test]
+    fn a_restart_leaves_the_process_waiting_for_its_start() {
+        let process = signalled(ProcessSignal::Restart);
+        let gui_api = api();
+        assert!(signal_end(
+            &process,
+            Some(&mut exited(0)),
+            &ended_output(),
+            &Instant::now(),
+            &gui_api,
+            &api(),
+        ));
+        assert_eq!(process.lock().unwrap().state, ProcessState::Waiting);
+        let gui_output = &gui_api.lock().unwrap().output;
+        assert!(gui_output.contains("P2pool stopped | "), "{gui_output}");
+    }
+
+    #[test]
+    fn a_restart_raised_before_a_process_exited_still_restarts_it() {
+        let process = signalled(ProcessSignal::Restart);
+        assert!(check_died(
+            &mut exited(0),
+            &ended_output(),
+            &process,
+            &Instant::now(),
+            &api(),
+            &api(),
+        ));
+        assert_eq!(process.lock().unwrap().state, ProcessState::Waiting);
+    }
+
+    #[test]
+    fn a_restarting_process_never_shows_as_stopped() {
+        let process = signalled(ProcessSignal::Restart);
+        let (mut stdout, output_end) = output(Box::new(std::io::empty()));
+        // Reads the state while the watchdog waits for the end of the output.
+        let reader = std::thread::spawn({
+            let process = Arc::clone(&process);
+            move || {
+                stdout.read_to_end(&mut Vec::new()).unwrap();
+                process.lock().unwrap().state
+            }
+        });
+        assert!(signal_end(
+            &process,
+            Some(&mut exited(0)),
+            &output_end,
+            &Instant::now(),
+            &api(),
+            &api(),
+        ));
+        assert_eq!(reader.join().unwrap(), ProcessState::Middle);
     }
 }

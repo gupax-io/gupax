@@ -3,7 +3,7 @@ use crate::disk::state::{P2pool, StartOptionsMode, XmrigProxy};
 use crate::helper::p2pool::ImgP2pool;
 use crate::helper::xrig::HashrateProvider;
 use crate::helper::{Helper, ProcessName, ProcessSignal, ProcessState, check_died};
-use crate::helper::{Pool, PubXvbApi};
+use crate::helper::{Pool, PubXvbApi, output, signal_end};
 use crate::helper::{Process, check_user_input, sleep, sleep_end_loop};
 use crate::human::HumanTime;
 use crate::miscs::{client, output_console};
@@ -13,7 +13,6 @@ use cfg_if::cfg_if;
 use enclose::{enc, enclose};
 use log::*;
 use readable::num::Unsigned;
-use readable::up::Uptime;
 use reqwest::header::AUTHORIZATION;
 use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::{Deserialize, Serialize};
@@ -28,17 +27,36 @@ use std::{
     thread,
     time::*,
 };
-use tokio::spawn;
 
 use super::Hashrate;
 use super::xmrig_proxy::ImgProxy;
-use std::process::{Child, Command};
+use std::process::{Child, Command, ExitStatus};
+
+// XMRig runs with rights that Gupax lacks to kill it.
+struct XmrigChild {
+    child: Child,
+    stdin: Box<dyn IoWrite + Send>,
+}
+
+impl crate::helper::Kill for XmrigChild {
+    // A Ctrl+C in its input asks XMRig to exit.
+    fn kill(&mut self) -> std::io::Result<bool> {
+        self.stdin.write_all(&[0x03])?;
+        Ok(false)
+    }
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        self.child.try_wait()
+    }
+    fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        self.child.wait()
+    }
+}
 
 impl Helper {
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    pub async fn read_pty_xmrig(
+    pub fn read_pty_xmrig(
         output_parse: Arc<Mutex<String>>,
         output_pub: Arc<Mutex<String>>,
         mut reader: Box<dyn std::io::Read + Send>,
@@ -53,67 +71,63 @@ impl Helper {
         process: Arc<Mutex<Process>>,
     ) {
         let mut i = 0;
-        while process.lock().unwrap().is_alive() {
-            let mut lines = BufReader::new(&mut reader).lines();
-            // Run a ANSI escape sequence filter for the first few lines.
-            while let Some(Ok(line)) = lines.next() {
-                let line = strip_ansi_escapes::strip_str(line);
-                // skip until the first line of xmrig is appearing, hiding automatic input of gupax
-                if i == 0 && !line.contains("ABOUT") {
-                    continue;
-                }
-                if i == 0 && line.contains("ABOUT") {
-                    info!("Xmrig is started");
-                    process.lock().unwrap().state = ProcessState::NotMining;
-                }
-                if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
-                    error!("XMRig PTY Parse | Output error: {e}");
-                }
-                if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
-                    error!("XMRig PTY Pub | Output error: {e}");
-                }
-                if i > 7 {
-                    break;
-                } else {
-                    i += 1;
-                }
+        let mut lines = BufReader::new(&mut reader).lines();
+        // Run a ANSI escape sequence filter for the first few lines.
+        while let Some(Ok(line)) = lines.next() {
+            let line = strip_ansi_escapes::strip_str(line);
+            // skip until the first line of xmrig is appearing, hiding automatic input of gupax
+            if i == 0 && !line.contains("ABOUT") {
+                continue;
             }
+            if i == 0 && line.contains("ABOUT") {
+                info!("Xmrig is started");
+                process.lock().unwrap().state = ProcessState::NotMining;
+            }
+            if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
+                error!("XMRig PTY Parse | Output error: {e}");
+            }
+            if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
+                error!("XMRig PTY Pub | Output error: {e}");
+            }
+            if i > 7 {
+                break;
+            } else {
+                i += 1;
+            }
+        }
 
-            while let Some(Ok(line)) = lines.next() {
-                // need to verify if pool still working
-                // for that need to catch "connect error"
-                // only check if xvb process is used and xmrig-proxy is not.
-                if process_xvb.lock().unwrap().is_alive() && !process_xp.lock().unwrap().is_alive()
-                {
-                    let proxy_port = proxy_state
-                        .current_ports(
-                            process_xp.lock().unwrap().is_alive(),
-                            &proxy_img.lock().unwrap(),
-                        )
-                        .0;
-                    let p2pool_port = p2pool_state.current_port(
-                        process_p2pool.lock().unwrap().is_alive(),
-                        &p2pool_img.lock().unwrap(),
-                    );
-                    Pool::update_current_pool(
-                        &line,
-                        proxy_port,
-                        p2pool_port,
-                        &process_xvb,
-                        pub_api_xvb,
-                        ProcessName::Xmrig,
-                        p2pool_state.address.clone(),
-                    );
-                }
-                //			println!("{}", line); // For debugging.
-                if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
-                    error!("XMRig PTY Parse | Output error: {e}");
-                }
-                if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
-                    error!("XMRig PTY Pub | Output error: {e}");
-                }
+        while let Some(Ok(line)) = lines.next() {
+            // need to verify if pool still working
+            // for that need to catch "connect error"
+            // only check if xvb process is used and xmrig-proxy is not.
+            if process_xvb.lock().unwrap().is_alive() && !process_xp.lock().unwrap().is_alive() {
+                let proxy_port = proxy_state
+                    .current_ports(
+                        process_xp.lock().unwrap().is_alive(),
+                        &proxy_img.lock().unwrap(),
+                    )
+                    .0;
+                let p2pool_port = p2pool_state.current_port(
+                    process_p2pool.lock().unwrap().is_alive(),
+                    &p2pool_img.lock().unwrap(),
+                );
+                Pool::update_current_pool(
+                    &line,
+                    proxy_port,
+                    p2pool_port,
+                    &process_xvb,
+                    pub_api_xvb,
+                    ProcessName::Xmrig,
+                    p2pool_state.address.clone(),
+                );
             }
-            sleep!(100);
+            //			println!("{}", line); // For debugging.
+            if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
+                error!("XMRig PTY Parse | Output error: {e}");
+            }
+            if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
+                error!("XMRig PTY Pub | Output error: {e}");
+            }
         }
     }
     //---------------------------------------------------------------------------------------------------- XMRig specific, most functions are very similar to P2Pool's
@@ -528,18 +542,18 @@ impl Helper {
             .create_duplex::<pipe_mode::Bytes>().unwrap();
 
                     let mut cmd = Self::create_xmrig_cmd_windows(args, path, &stdin_name, &stdout_name);
-            let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+            let child_pty = cmd.spawn().unwrap();
 
 
-        let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_listener.accept().unwrap());
+        let stdin: Box<dyn IoWrite + Send> = Box::new(stdin_listener.accept().unwrap());
         let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_listener.accept().unwrap());
 
                         } else if #[cfg(target_os = "linux")] {
                     let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
                     let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
                     let mut cmd = Self::create_xmrig_cmd_unix(args, path, stdin_reader, stdout_writer);
-            let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
-                    let mut stdin: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
+            let child_pty = cmd.spawn().unwrap();
+                    let stdin: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
                     let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_reader);
 
                         } else if #[cfg(target_os = "macos")] {
@@ -560,15 +574,21 @@ impl Helper {
                     std::fs::File::create(&output_path).unwrap();
 
                                let mut cmd = Self::create_xmrig_cmd_macos(args, path, &input_path, &output_path);
-            let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+            let child_pty = cmd.spawn().unwrap();
                     let input_fifo = std::fs::OpenOptions::new()
                         .write(true)
                         .open(input_path).unwrap();
 
-                    let mut stdin: Box<dyn IoWrite + Send> = Box::new(input_fifo);
+                    let stdin: Box<dyn IoWrite + Send> = Box::new(input_fifo);
                     let stdout: Box<dyn std::io::Read + Send> = Box::new(std::fs::File::open(&output_path).unwrap());
 
             }        }
+
+        let mut xmrig = XmrigChild {
+            child: child_pty,
+            stdin,
+        };
+        let (stdout, output_end) = output(stdout);
 
         debug!("XMRig | Clearing GUI output...");
         gui_api.lock().unwrap().output.clear();
@@ -579,13 +599,15 @@ impl Helper {
         lock.state = ProcessState::NotMining;
         lock.reset_signal_on_start();
         lock.start = Instant::now();
+        lock.clear_output();
         drop(lock);
 
         let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
         let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
-        spawn(
-            enclose!((pub_api_xvb, process_xp, p2pool_state, p2pool_img, process_p2pool, proxy_img, proxy_state, process) async move {
-                Self::read_pty_xmrig(output_parse, output_pub, stdout, process_xvb, process_xp, process_p2pool, &pub_api_xvb, &p2pool_state, &p2pool_img, &proxy_img, &proxy_state, process).await;
+        // The reader blocks until the output of XMRig ends, which a forked XMRig keeps open.
+        thread::spawn(
+            enclose!((pub_api_xvb, process_xp, p2pool_state, p2pool_img, process_p2pool, proxy_img, proxy_state, process) move || {
+                Self::read_pty_xmrig(output_parse, output_pub, stdout, process_xvb, process_xp, process_p2pool, &pub_api_xvb, &p2pool_state, &p2pool_img, &proxy_img, &proxy_state, process);
             }),
         );
 
@@ -624,19 +646,28 @@ impl Helper {
 
             // Check if the process secretly died without us knowing :)
             if check_died(
-                &child_pty,
-                &mut process.lock().unwrap(),
+                &mut xmrig,
+                &output_end,
+                &process,
                 &start,
-                &mut gui_api.lock().unwrap().output,
+                &gui_api,
+                &pub_api,
             ) {
                 break;
             }
             // Stop on [Stop/Restart] SIGNAL
-            if Self::xmrig_signal_end(&process, &mut stdin, &child_pty, &start, &gui_api) {
+            if signal_end(
+                &process,
+                Some(&mut xmrig),
+                &output_end,
+                &start,
+                &gui_api,
+                &pub_api,
+            ) {
                 break;
             }
             // Check vector of user input
-            check_user_input(&process, &mut stdin);
+            check_user_input(&process, &mut xmrig.stdin);
             // Check if logs need resetting
             debug!("XMRig Watchdog | Attempting GUI log reset check");
             {
@@ -717,63 +748,6 @@ impl Helper {
 
         // 5. If loop broke, we must be done here.
         info!("XMRig Watchdog | Watchdog thread exiting... Goodbye!");
-    }
-    fn xmrig_signal_end(
-        process: &Arc<Mutex<Process>>,
-        stdin: &mut Box<dyn std::io::Write + Send>,
-        child_pty: &Arc<Mutex<Child>>,
-        start: &Instant,
-        gui_api: &Arc<Mutex<PubXmrigApi>>,
-    ) -> bool {
-        let signal = process.lock().unwrap().signal.clone();
-        if signal == ProcessSignal::Stop || signal == ProcessSignal::Restart {
-            debug!("XMRig Watchdog | Stop/Restart SIGNAL caught");
-            // send a Ctrl+C in the input, overriding the need to re-authenticate
-
-            if let Err(e) = stdin.write_all(&[0x03]) {
-                error!("XMRig Watchdog | Kill error: {e}");
-            }
-            // The process and GUI locks are released during this wait, which has no timeout.
-            let exit = child_pty.lock().unwrap().wait();
-            let mut process = process.lock().unwrap();
-            let exit_status = match exit {
-                Ok(e) => {
-                    if e.success() {
-                        if process.signal == ProcessSignal::Stop {
-                            process.state = ProcessState::Dead;
-                        }
-                        "Successful"
-                    } else {
-                        if process.signal == ProcessSignal::Stop {
-                            process.state = ProcessState::Failed;
-                        }
-                        "Failed"
-                    }
-                }
-                _ => {
-                    if process.signal == ProcessSignal::Stop {
-                        process.state = ProcessState::Failed;
-                    }
-                    "Unknown Error"
-                }
-            };
-            let uptime = Uptime::from(start.elapsed());
-            info!("XMRig | Stopped ... Uptime was: [{uptime}], Exit status: [{exit_status}]");
-            if let Err(e) = writeln!(
-                gui_api.lock().unwrap().output,
-                "{HORI_CONSOLE}\nXMRig stopped | Uptime: [{uptime}] | Exit status: [{exit_status}]\n{HORI_CONSOLE}\n\n\n\n"
-            ) {
-                error!("XMRig Watchdog | GUI Uptime/Exit status write failed: {e}");
-            }
-            match process.signal {
-                ProcessSignal::Stop => process.signal = ProcessSignal::None,
-                ProcessSignal::Restart => process.state = ProcessState::Waiting,
-                _ => (),
-            }
-            debug!("XMRig Watchdog | Stop/Restart SIGNAL done, breaking");
-            return true;
-        }
-        false
     }
 }
 

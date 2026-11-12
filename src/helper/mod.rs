@@ -53,12 +53,13 @@ use port_check::is_port_reachable_with_timeout;
 use readable::up::Uptime;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Write};
+use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
-use std::process::Child;
+use std::process::{Child, ExitStatus};
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::*,
 };
@@ -215,6 +216,12 @@ impl Process {
             self.signal = ProcessSignal::None;
         }
     }
+
+    // Lines left by the previous run would show in the console and state of the next one.
+    pub fn clear_output(&self) {
+        self.output_parse.lock().unwrap().clear();
+        self.output_pub.lock().unwrap().clear();
+    }
     pub fn _initialize_process_pid(&mut self, sys: Arc<Mutex<System>>) -> bool {
         if let Some(process) = sys
             .lock()
@@ -277,6 +284,8 @@ pub enum ProcessSignal {
 pub enum ProcessName {
     Node,
     P2pool,
+    // Its own spelling.
+    #[display("XMRig")]
     Xmrig,
     #[display("Proxy")]
     XmrigProxy,
@@ -751,52 +760,187 @@ impl Helper {
     }
 }
 
+trait ApiOutput {
+    fn output(&mut self) -> &mut String;
+}
+
+impl ApiOutput for PubNodeApi {
+    fn output(&mut self) -> &mut String {
+        &mut self.output
+    }
+}
+
+impl ApiOutput for PubP2poolApi {
+    fn output(&mut self) -> &mut String {
+        &mut self.output
+    }
+}
+
+impl ApiOutput for PubXmrigApi {
+    fn output(&mut self) -> &mut String {
+        &mut self.output
+    }
+}
+
+impl ApiOutput for PubXmrigProxyApi {
+    fn output(&mut self) -> &mut String {
+        &mut self.output
+    }
+}
+
 // common functions inside watchdog thread
-fn check_died(
-    child_pty: &Arc<Mutex<Child>>,
-    process: &mut Process,
+fn check_died<A: ApiOutput>(
+    child_pty: &mut impl Kill,
+    output_end: &OutputEnd,
+    process: &Mutex<Process>,
     start: &Instant,
-    gui_api_output_raw: &mut String,
+    gui_api: &Mutex<A>,
+    pub_api: &Mutex<A>,
 ) -> bool {
     // Check if the process secretly died without us knowing :)
-    if let Ok(Some(code)) = child_pty.lock().unwrap().try_wait() {
-        debug!(
-            "{} Watchdog | Process secretly died on us! Getting exit status...",
-            process.name
-        );
-        let exit_status = match code.success() {
-            true => {
-                process.state = ProcessState::Dead;
-                "Successful"
+    let Ok(Some(status)) = child_pty.try_wait() else {
+        return false;
+    };
+    // With no lock held: the reader can need one to store the last lines.
+    output_end.wait(OUTPUT_END_LIMIT);
+    let mut process = process.lock().unwrap();
+    debug!(
+        "{} Watchdog | Process secretly died on us! Getting exit status...",
+        process.name
+    );
+    show_exit(
+        &mut process,
+        start,
+        Ok(status.success()),
+        gui_api.lock().unwrap().output(),
+        pub_api.lock().unwrap().output(),
+    );
+    debug!(
+        "{} Watchdog | Secret dead process reap OK, breaking",
+        process.name
+    );
+    true
+}
+
+const OUTPUT_END_LIMIT: Duration = Duration::from_secs(1);
+
+// Its end comes from a read made after the process exited, so it holds every line the
+// process wrote.
+struct Output {
+    inner: Box<dyn Read + Send>,
+    exit: mpsc::Receiver<()>,
+    exited: bool,
+    // Dropped with the reader, once it stored every line, even one cut before its newline.
+    _dropped: mpsc::Sender<()>,
+}
+
+impl Read for Output {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            match self.inner.read(buf) {
+                Ok(0) | Err(_) if self.exited => return Ok(0),
+                // The macOS log file grows while XMRig runs.
+                Ok(0) | Err(_) => {
+                    self.exited = !matches!(
+                        self.exit.recv_timeout(Duration::from_millis(100)),
+                        Err(mpsc::RecvTimeoutError::Timeout)
+                    )
+                }
+                read => return read,
             }
-            false => {
-                process.state = ProcessState::Failed;
-                "Failed"
-            }
-        };
-        let uptime = Uptime::from(start.elapsed());
-        info!(
-            "{} | Stopped ... Uptime was: [{}], Exit status: [{}]",
-            process.name, uptime, exit_status
-        );
-        if let Err(e) = writeln!(
-            *gui_api_output_raw,
-            "{}\n{} stopped | Uptime: [{}] | Exit status: [{}]\n{}\n\n\n\n",
-            process.name, HORI_CONSOLE, uptime, exit_status, HORI_CONSOLE
-        ) {
-            error!(
-                "{} Watchdog | GUI Uptime/Exit status write failed: {}",
-                process.name, e
-            );
         }
-        process.signal = ProcessSignal::None;
-        debug!(
-            "{} Watchdog | Secret dead process reap OK, breaking",
-            process.name
-        );
-        return true;
     }
-    false
+}
+
+struct OutputEnd {
+    exit: mpsc::Sender<()>,
+    dropped: mpsc::Receiver<()>,
+}
+
+impl OutputEnd {
+    // Once the process exited: returns when the reader dropped the output, or after `limit`.
+    fn wait(&self, limit: Duration) {
+        let _ = self.exit.send(());
+        let _ = self.dropped.recv_timeout(limit);
+    }
+}
+
+fn output(inner: Box<dyn Read + Send>) -> (Box<dyn Read + Send>, OutputEnd) {
+    let (exit, exit_receiver) = mpsc::channel();
+    let (dropped_sender, dropped) = mpsc::channel();
+    let output = Output {
+        inner,
+        exit: exit_receiver,
+        exited: false,
+        _dropped: dropped_sender,
+    };
+    (Box::new(output), OutputEnd { exit, dropped })
+}
+
+// For a process that has no output to wait for.
+fn ended_output() -> OutputEnd {
+    output(Box::new(std::io::empty())).1
+}
+
+// Ends the console of a run. `exit` tells whether the process ended as expected.
+fn show_exit(
+    process: &mut Process,
+    start: &Instant,
+    exit: std::io::Result<bool>,
+    gui_api_output_raw: &mut String,
+    pub_api_output: &mut String,
+) {
+    let exit_status = match exit {
+        Ok(true) => {
+            process.state = ProcessState::Dead;
+            "Successful"
+        }
+        Ok(false) => {
+            process.state = ProcessState::Failed;
+            "Failed"
+        }
+        Err(_) => {
+            process.state = ProcessState::Failed;
+            "Unknown Error"
+        }
+    };
+    let uptime = Uptime::from(start.elapsed());
+    info!(
+        "{} | Stopped ... Uptime was: [{}], Exit status: [{}]",
+        process.name, uptime, exit_status
+    );
+    // The Helper loop moves the last lines to the GUI only while the process is alive.
+    gui_api_output_raw.push_str(&std::mem::take(pub_api_output));
+    gui_api_output_raw.push_str(&std::mem::take(&mut *process.output_pub.lock().unwrap()));
+    show_stopped(
+        gui_api_output_raw,
+        process.name,
+        start.elapsed(),
+        Some(exit_status),
+    );
+    // The thread of a restart starts the process again once it waits.
+    match process.signal {
+        ProcessSignal::Restart => process.state = ProcessState::Waiting,
+        _ => process.signal = ProcessSignal::None,
+    }
+}
+
+// The banner that ends the console of a run, framed by horizontal rules. Its uptime reads as in the
+// Status tab, however the run ended.
+fn show_stopped(
+    gui_api_output_raw: &mut String,
+    name: impl Display,
+    uptime: Duration,
+    exit_status: Option<&str>,
+) {
+    let uptime = HumanTime::into_human(uptime).display(false);
+    let exit_status = exit_status.map_or(String::new(), |e| format!(" | Exit status: [{e}]"));
+    if let Err(e) = writeln!(
+        gui_api_output_raw,
+        "{HORI_CONSOLE}\n{name} stopped | Uptime: [{uptime}]{exit_status}\n{HORI_CONSOLE}\n\n\n\n"
+    ) {
+        error!("{name} Watchdog | GUI Uptime/Exit status write failed: {e}");
+    }
 }
 
 // The start of a watchdog, whose console tells why the process did not start. Its callers lock
@@ -837,16 +981,7 @@ pub fn check_died_process(
         );
         let uptime = Uptime::from(start.elapsed());
         info!("{} | Stopped ... Uptime was: [{}]", process.name, uptime);
-        if let Err(e) = writeln!(
-            *gui_api_output_raw,
-            "{}\n{} stopped | Uptime: [{}]\n{}\n\n\n\n",
-            process.name, HORI_CONSOLE, uptime, HORI_CONSOLE
-        ) {
-            error!(
-                "{} Watchdog | GUI Uptime/Exit status write failed: {}",
-                process.name, e
-            );
-        }
+        show_stopped(gui_api_output_raw, process.name, start.elapsed(), None);
         process.signal = ProcessSignal::None;
         debug!(
             "{} Watchdog | Secret dead process reap OK, breaking",
@@ -884,39 +1019,58 @@ fn check_user_input(process: &Arc<Mutex<Process>>, stdin: &mut Box<dyn std::io::
         }
     }
 }
+// A child that Gupax started.
+trait Kill {
+    // Tells whether it forced the exit, which then says nothing of how the process ran.
+    fn kill(&mut self) -> std::io::Result<bool>;
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>>;
+    fn wait(&mut self) -> std::io::Result<ExitStatus>;
+}
+
+impl Kill for Child {
+    fn kill(&mut self) -> std::io::Result<bool> {
+        Child::kill(self).map(|()| true)
+    }
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        Child::try_wait(self)
+    }
+    fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        Child::wait(self)
+    }
+}
+
 /// If the process is not started by Gupax, we use a pid kill instead of the terminal.
 /// Won't work with xmrig as admin unless we resask for sudo but we don't manage an external xmrig miner, only possibly a local node.
-fn signal_end(
-    process: &mut Process,
-    child_pty: Option<&Arc<Mutex<Child>>>,
+fn signal_end<A: ApiOutput>(
+    process_mutex: &Mutex<Process>,
+    child_pty: Option<&mut impl Kill>,
+    output_end: &OutputEnd,
     start: &Instant,
-    gui_api_output_raw: &mut String,
+    gui_api: &Mutex<A>,
+    pub_api: &Mutex<A>,
 ) -> bool {
-    if process.signal == ProcessSignal::Stop {
-        debug!("{} Watchdog | Stop SIGNAL caught", process.name);
-        let mut exit_status = "";
+    let mut process = process_mutex.lock().unwrap();
+    // Restart are only for process started by Gupax
+    let restart = process.signal == ProcessSignal::Restart && child_pty.is_some();
+    if process.signal == ProcessSignal::Stop || restart {
+        debug!(
+            "{} Watchdog | {:?} SIGNAL caught",
+            process.name, process.signal
+        );
         // This actually sends a SIGHUP to p2pool (closes the PTY, hangs up on p2pool)
-        if let Some(child_pty) = child_pty {
-            let mut child_pty_lock = child_pty.lock().unwrap();
-            if let Err(e) = child_pty_lock.kill() {
-                error!("{} Watchdog | Kill error: {}", process.name, e);
-            }
+        let exit = if let Some(child_pty) = child_pty {
+            let name = process.name;
+            // The GUI reads the state while the process ends, which a restart has to keep.
+            drop(process);
+            let forced = child_pty
+                .kill()
+                .inspect_err(|e| error!("{name} Watchdog | Kill error: {e}"))
+                .unwrap_or(false);
             // Wait to get the exit status
-            exit_status = match child_pty_lock.wait() {
-                Ok(e) => {
-                    if e.success() {
-                        process.state = ProcessState::Dead;
-                        "Successful"
-                    } else {
-                        process.state = ProcessState::Failed;
-                        "Failed"
-                    }
-                }
-                _ => {
-                    process.state = ProcessState::Failed;
-                    "Unknown Error"
-                }
-            };
+            let exit = child_pty.wait();
+            output_end.wait(OUTPUT_END_LIMIT);
+            process = process_mutex.lock().unwrap();
+            exit.map(|status| forced || status.success())
         } else {
             // send the pid kill
             // https://docs.rs/sysinfo/latest/sysinfo/struct.Process.html#method.kill_and_wait
@@ -924,95 +1078,25 @@ fn signal_end(
             // kill and wait
             // it cost us almost 100ms, does a refresh and lock would cost less instead ?
             let s = System::new_all();
-            if let Some(pid) = s
-                .processes_by_exact_name(process.name.binary_name().as_ref())
-                .last()
-            {
-                match pid.kill_and_wait() {
-                    Ok(status) => {
-                        if status.is_some_and(|s| s.success()) {
-                            process.state = ProcessState::Dead;
-                            exit_status = "Successful";
-                        } else {
-                            process.state = ProcessState::Failed;
-                            exit_status = "Failed";
-                        }
-                    }
-                    Err(_) => {
-                        process.state = ProcessState::Failed;
-                        exit_status = "Failed";
-                    }
-                }
-            }
-        }
-        let uptime = HumanTime::into_human(start.elapsed());
-        info!(
-            "{} Watchdog | Stopped ... Uptime was: [{}], Exit status: [{}]",
-            process.name,
-            uptime.display(false),
-            exit_status
-        );
-        // This is written directly into the GUI API, because sometimes the 900ms event loop can't catch it.
-        let name = process.name.to_owned();
-        if let Err(e) = writeln!(
-            gui_api_output_raw,
-            "{}\n{} stopped | Uptime: [{}] | Exit status: [{}]\n{}\n\n\n\n",
-            name,
-            HORI_CONSOLE,
-            uptime.display(false),
-            exit_status,
-            HORI_CONSOLE
-        ) {
-            error!("{name} Watchdog | GUI Uptime/Exit status write failed: {e}");
-        }
-        process.signal = ProcessSignal::None;
-        debug!("{} Watchdog | Stop SIGNAL done, breaking", process.name,);
-        return true;
-    // Check RESTART
-    // Restart are only for process started by Gupax
-    } else if process.signal == ProcessSignal::Restart
-        && let Some(child) = child_pty
-    {
-        let mut child_pty_lock = child.lock().unwrap();
-
-        debug!("{} Watchdog | Restart SIGNAL caught", process.name,);
-        // This actually sends a SIGHUP to p2pool (closes the PTY, hangs up on p2pool)
-        if let Err(e) = child_pty_lock.kill() {
-            error!("{} Watchdog | Kill error: {}", process.name, e);
-        }
-        // Wait to get the exit status
-        let exit_status = match child_pty_lock.wait() {
-            Ok(e) => {
-                if e.success() {
-                    "Successful"
-                } else {
-                    "Failed"
-                }
-            }
-            _ => "Unknown Error",
+            Ok(
+                s.processes_by_exact_name(process.name.binary_name().as_ref())
+                    .last()
+                    .is_some_and(|pid| pid.kill_and_wait().is_ok()),
+            )
         };
-        let uptime = HumanTime::into_human(start.elapsed());
-        info!(
-            "{} Watchdog | Stopped ... Uptime was: [{}], Exit status: [{}]",
-            process.name,
-            uptime.display(false),
-            exit_status
-        );
         // This is written directly into the GUI API, because sometimes the 900ms event loop can't catch it.
-        let name = process.name.to_owned();
-        if let Err(e) = writeln!(
-            gui_api_output_raw,
-            "{}\n{} stopped | Uptime: [{}] | Exit status: [{}]\n{}\n\n\n\n",
-            name,
-            HORI_CONSOLE,
-            uptime.display(false),
-            exit_status,
-            HORI_CONSOLE
-        ) {
-            error!("{name} Watchdog | GUI Uptime/Exit status write failed: {e}");
-        }
-        process.state = ProcessState::Waiting;
-        debug!("{} Watchdog | Restart SIGNAL done, breaking", process.name,);
+        show_exit(
+            &mut process,
+            start,
+            exit,
+            gui_api.lock().unwrap().output(),
+            pub_api.lock().unwrap().output(),
+        );
+        debug!(
+            "{} Watchdog | {} SIGNAL done, breaking",
+            process.name,
+            if restart { "Restart" } else { "Stop" }
+        );
         return true;
     }
     false
@@ -1072,6 +1156,33 @@ fn shell_command(windows: &str, unix: &str) -> std::process::Command {
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
     cmd
+}
+
+// A child that exited with `code`.
+#[cfg(test)]
+fn exited(code: i32) -> Child {
+    let exit = format!("exit {code}");
+    let mut child = shell_command(&exit, &exit).spawn().unwrap();
+    child.wait().unwrap();
+    child
+}
+
+// A child that runs until it is killed.
+#[cfg(all(test, windows))]
+fn sleeping() -> Child {
+    std::process::Command::new(r"C:\Windows\System32\PING.EXE")
+        .args(["-n", "10", "127.0.0.1"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+#[cfg(all(test, unix))]
+fn sleeping() -> Child {
+    std::process::Command::new("sleep")
+        .arg("10")
+        .spawn()
+        .unwrap()
 }
 
 #[cfg(test)]
