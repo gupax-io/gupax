@@ -86,7 +86,6 @@ impl Helper {
         p2pool_img: &Arc<Mutex<ImgP2pool>>,
         proxy_img: &Arc<Mutex<ImgProxy>>,
         proxy_state: &XmrigProxy,
-        process: Arc<Mutex<Process>>,
     ) {
         let mut i = 0;
         let mut lines = crate::helper::text_lines(&mut reader);
@@ -99,7 +98,6 @@ impl Helper {
             }
             if i == 0 && line.contains("ABOUT") {
                 info!("Xmrig is started");
-                process.lock().unwrap().state = ProcessState::NotMining;
             }
             if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
                 error!("XMRig PTY Parse | Output error: {e}");
@@ -626,8 +624,8 @@ impl Helper {
         let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
         // The reader blocks until the output of XMRig ends, which a forked XMRig keeps open.
         thread::spawn(
-            enclose!((pub_api_xvb, process_xp, p2pool_state, p2pool_img, process_p2pool, proxy_img, proxy_state, process) move || {
-                Self::read_pty_xmrig(output_parse, output_pub, stdout, process_xvb, process_xp, process_p2pool, &pub_api_xvb, &p2pool_state, &p2pool_img, &proxy_img, &proxy_state, process);
+            enclose!((pub_api_xvb, process_xp, p2pool_state, p2pool_img, process_p2pool, proxy_img, proxy_state) move || {
+                Self::read_pty_xmrig(output_parse, output_pub, stdout, process_xvb, process_xp, process_p2pool, &pub_api_xvb, &p2pool_state, &p2pool_img, &proxy_img, &proxy_state);
             }),
         );
 
@@ -876,7 +874,7 @@ impl PubXmrigApi {
         let mut output_parse = process.output_parse.lock().unwrap();
         // 2. Check for "new job"/"no active...".
         if XMRIG_REGEX.new_job.is_match(&output_parse) {
-            process.state = ProcessState::Alive;
+            process.state.set_running(ProcessState::Alive);
             // get the pool we mine on to put it on stats
             if let Some(name_pool) = crate::regex::detect_pool_xmrig(
                 &output_parse,
@@ -888,7 +886,7 @@ impl PubXmrigApi {
                 public.pool = Some(name_pool);
             }
         } else if XMRIG_REGEX.not_mining.is_match(&output_parse) {
-            process.state = ProcessState::NotMining;
+            process.state.set_running(ProcessState::NotMining);
             public.pool = None;
         }
 
@@ -1112,5 +1110,25 @@ mod tests {
         let exit = output.find("Exit status: [Failed]").expect(&output);
         assert!(output[..exit].contains("ABOUT XMRig"), "{output}");
         assert_eq!(process.lock().unwrap().state, ProcessState::Failed);
+    }
+
+    #[test]
+    fn xmrig_output_keeps_a_stop_in_progress() {
+        let process = xmrig();
+        process.lock().unwrap().state = ProcessState::Middle;
+        *process.lock().unwrap().output_parse.lock().unwrap() =
+            "[2022-02-12 12:49:30.311]  net      new job from 192.168.2.1:3333 diff 402K algo rx/0 height 2241142 (11 tx)\n".to_string();
+        PubXmrigApi::update_from_output(
+            &mut PubXmrigApi::new(),
+            Duration::ZERO,
+            &mut process.lock().unwrap(),
+            &not_alive(ProcessName::P2pool).lock().unwrap(),
+            &not_alive(ProcessName::XmrigProxy).lock().unwrap(),
+            &arc_mut!(ImgProxy::new()),
+            &arc_mut!(ImgP2pool::new()),
+            &XmrigProxy::default(),
+            &P2pool::default(),
+        );
+        assert_eq!(process.lock().unwrap().state, ProcessState::Middle);
     }
 }
