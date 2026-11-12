@@ -71,24 +71,8 @@ impl Helper {
     ) {
         let mut stdout = crate::helper::text_lines(reader);
 
-        // Run a ANSI escape sequence filter for the first few lines.
-        let mut i = 0;
         while let Some(Ok(line)) = stdout.next() {
             let line = strip_ansi_escapes::strip_str(line);
-            if let Err(e) = writeln!(output_parse.lock().unwrap(), "{line}") {
-                error!("XMRig-Proxy PTY Parse | Output error: {e}");
-            }
-            if let Err(e) = writeln!(output_pub.lock().unwrap(), "{line}") {
-                error!("XMRig-Proxy PTY Pub | Output error: {e}");
-            }
-            if i > 7 {
-                break;
-            } else {
-                i += 1;
-            }
-        }
-
-        while let Some(Ok(line)) = stdout.next() {
             // need to verify if node still working
             // for that need to catch "connect error"
             // only switch nodes of XvB if XvB process is used
