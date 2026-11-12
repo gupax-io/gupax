@@ -158,6 +158,10 @@ elevated-helper = {git="https://github.com/Cyrix126/elevated-helper"}
 uuid = "1.22"
 conpty = "0.7"
 
+# Frees the pseudo console of a program that did not start.
+[patch.crates-io]
+conpty = { git = "https://github.com/Cyrix126/conpty" }
+
 # For Windows build (icon)
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1.12"

@@ -58,7 +58,6 @@ use std::io::Write as IoWrite;
 use std::mem;
 use std::path::Path;
 use std::process::Command;
-use std::process::Stdio;
 use std::{
     fmt::Write,
     path::PathBuf,
@@ -652,22 +651,25 @@ impl Helper {
         node: NodeString,
     ) {
         // 1a. Create PTY
-        let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
-        let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
         let mut cmd = Command::new(&path);
         #[cfg(target_os = "windows")]
         use std::os::windows::process::CommandExt;
         #[cfg(target_os = "windows")]
         cmd.creation_flags(0x08000000);
 
-        cmd.stdin(Stdio::from(stdin_reader));
-        cmd.stdout(Stdio::from(stdout_writer));
         cmd.args(args);
         cmd.env("NO_COLOR", "true");
-        cmd.current_dir(path.as_path().parent().unwrap());
+        crate::helper::run_in_folder_of(&mut cmd, &path);
         // 1c. Create child
         debug!("P2Pool | Creating child...");
-        let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+        let Some((child_pty, stdin_writer, stdout_reader)) = crate::helper::started(
+            crate::helper::spawn_piped(cmd),
+            &mut process.lock().unwrap(),
+            &mut gui_api.lock().unwrap().output,
+        ) else {
+            return;
+        };
+        let child_pty = Arc::new(Mutex::new(child_pty));
 
         // 2. Set process state
         debug!("P2Pool | Setting process state...");

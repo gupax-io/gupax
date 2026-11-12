@@ -799,6 +799,28 @@ fn check_died(
     false
 }
 
+// The start of a watchdog, whose console tells why the process did not start. Its callers lock
+// the process before the GUI API, as the Helper loop does.
+fn started<T>(
+    start: std::io::Result<T>,
+    process: &mut Process,
+    gui_api_output_raw: &mut String,
+) -> Option<T> {
+    let e = match start {
+        Ok(started) => return Some(started),
+        Err(e) => e,
+    };
+    error!("{} Watchdog | Could not start: {e}", process.name);
+    process.state = ProcessState::Failed;
+    process.signal = ProcessSignal::None;
+    crate::miscs::output_console(
+        gui_api_output_raw,
+        &format!("{} could not start.\nError: {e}", process.name),
+        process.name,
+    );
+    None
+}
+
 // Allow to check if a process outside of Gupax is still alive, without having a pty to it
 // Used when using a detected local node instead of one started by Gupax
 pub fn check_died_process(
@@ -1006,4 +1028,65 @@ async fn sleep_end_loop(now: Instant, name: impl Display) {
     } else {
         debug!("{name} Watchdog | END OF LOOP - Not sleeping!");
     }
+}
+
+// Starts `cmd` with its input and output piped. Its stderr goes to the output too, where
+// processes write why their arguments are wrong.
+// Takes `cmd`, whose copy of the output writer would keep the output open once the process exited.
+fn spawn_piped(
+    mut cmd: std::process::Command,
+) -> std::io::Result<(Child, std::io::PipeWriter, std::io::PipeReader)> {
+    let (stdin_reader, stdin_writer) = std::io::pipe()?;
+    let (stdout_reader, stdout_writer) = std::io::pipe()?;
+    cmd.stderr(stdout_writer.try_clone()?);
+    cmd.stdin(stdin_reader).stdout(stdout_writer);
+    let child = cmd.spawn().map_err(|e| {
+        let program = cmd.get_program().display();
+        std::io::Error::new(e.kind(), format!("{program}: {e}"))
+    })?;
+    Ok((child, stdin_writer, stdout_reader))
+}
+
+// A binary at the root has no folder, and then fails to start with the reason.
+fn run_in_folder_of(cmd: &mut std::process::Command, binary: &Path) {
+    if let Some(folder) = binary.parent() {
+        cmd.current_dir(folder);
+    }
+}
+
+// The shell of the platform, as a program and the arguments that run its script.
+#[cfg(all(test, windows))]
+fn shell(windows: &str, _unix: &str) -> (PathBuf, Vec<String>) {
+    let cmd = r"C:\Windows\System32\cmd.exe";
+    (cmd.into(), vec!["/C".into(), windows.into()])
+}
+
+#[cfg(all(test, unix))]
+fn shell(_windows: &str, unix: &str) -> (PathBuf, Vec<String>) {
+    ("/bin/sh".into(), vec!["-c".into(), unix.into()])
+}
+
+#[cfg(test)]
+fn shell_command(windows: &str, unix: &str) -> std::process::Command {
+    let (program, args) = shell(windows, unix);
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args);
+    cmd
+}
+
+#[cfg(test)]
+fn not_alive(name: ProcessName) -> Arc<Mutex<Process>> {
+    arc_mut!(Process::new(name, String::new(), PathBuf::new()))
+}
+
+// Fails a test that would wait forever on the call.
+#[cfg(test)]
+fn within<T: Send + 'static>(call: impl FnOnce() -> T + Send + 'static) -> T {
+    let (sender, returned) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(call());
+    });
+    returned
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the call still waited after 20 s")
 }

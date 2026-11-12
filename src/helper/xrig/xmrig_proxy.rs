@@ -388,31 +388,35 @@ impl Helper {
         // 1b. Create command
         debug!("XMRig-Proxy | Creating command...");
 
-        #[cfg(not(target_os = "windows"))]
-        let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
-        #[cfg(not(target_os = "windows"))]
-        let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
         let mut cmd = Command::new(&path);
         #[cfg(target_os = "windows")]
         use std::os::windows::process::CommandExt;
         #[cfg(target_os = "windows")]
         cmd.creation_flags(0x08000000);
         cmd.args(args);
-        #[cfg(not(target_os = "windows"))]
-        cmd.stdin(std::process::Stdio::from(stdin_reader));
-        #[cfg(not(target_os = "windows"))]
-        cmd.stdout(std::process::Stdio::from(stdout_writer));
-        cmd.current_dir(path.parent().unwrap());
+        crate::helper::run_in_folder_of(&mut cmd, &path);
         // 1c. Create child
         debug!("XMRig-Proxy | Creating child...");
         #[cfg(not(target_os = "windows"))]
-        let child_pty = Arc::new(Mutex::new(cmd.spawn().unwrap()));
+        let spawned = crate::helper::spawn_piped(cmd);
         #[cfg(target_os = "windows")]
-        let process_pty = Arc::new(Mutex::new(conpty::Process::spawn(cmd).unwrap()));
+        let spawned = conpty::Process::spawn(cmd)
+            .and_then(|mut process_pty| {
+                let (stdin_writer, stdout_reader) = (process_pty.input()?, process_pty.output()?);
+                Ok((process_pty, stdin_writer, stdout_reader))
+            })
+            .map_err(std::io::Error::other);
+        let Some((child, stdin_writer, stdout_reader)) = crate::helper::started(
+            spawned,
+            &mut process.lock().unwrap(),
+            &mut gui_api.lock().unwrap().output,
+        ) else {
+            return;
+        };
+        #[cfg(not(target_os = "windows"))]
+        let child_pty = Arc::new(Mutex::new(child));
         #[cfg(target_os = "windows")]
-        let stdout_reader = process_pty.lock().unwrap().output().unwrap();
-        #[cfg(target_os = "windows")]
-        let stdin_writer = process_pty.lock().unwrap().input().unwrap();
+        let process_pty = Arc::new(Mutex::new(child));
         spawn(
             enc!((pub_api_xvb, output_parse, output_pub, process_p2pool, p2pool_state, p2pool_img,  state) async move {
                 Self::read_pty_xp(output_parse, output_pub, stdout_reader, process_xvb, &pub_api_xvb, process_p2pool, &p2pool_state, &p2pool_img, &state).await;
