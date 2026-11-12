@@ -284,12 +284,10 @@ mod tests {
             .unwrap();
         assert_eq!(output.status.code(), Some(1));
         let reason = decode_reason(&String::from_utf8(output.stdout).unwrap());
-        assert!(!reason.is_empty());
-        // .NET drops the final period of the system message.
+        // Start-Process ends its message with the one of the system.
+        let system = io::Error::from_raw_os_error(2).to_string();
         assert!(
-            io::Error::from_raw_os_error(2)
-                .to_string()
-                .starts_with(&reason),
+            reason.ends_with(system.trim_end_matches(" (os error 2)")),
             "{reason}"
         );
     }
