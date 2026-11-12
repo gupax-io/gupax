@@ -643,6 +643,7 @@ Uptime         = 0h 2m 4s
     use crate::helper::p2pool::PubP2poolApi;
     use crate::helper::xrig::xmrig::PubXmrigApi;
     use crate::helper::xrig::xmrig_proxy::PubXmrigProxyApi;
+    use crate::helper::xvb::PubXvbApi;
     use crate::helper::{
         ProcessSignal, check_died, ended_output, exited, not_alive, output, run_in_folder_of,
         shell_command, signal_end, sleeping, spawn_piped, started, text_lines, within,
@@ -1050,6 +1051,32 @@ Uptime         = 0h 2m 4s
                 .lock()
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn xmrig_proxy_lines_show_as_text() {
+        let output_pub = Arc::new(Mutex::new(String::new()));
+        futures::executor::block_on(Helper::read_pty_xp(
+            Arc::new(Mutex::new(String::new())),
+            Arc::clone(&output_pub),
+            std::io::Cursor::new(concat!(
+                "\x1b[?25l\x1b[2J\x1b[H\r\n",
+                " * ABOUT XMRig-Proxy/6.22\r\n",
+                "\x1b[1;37mnew job\x1b[0m from pool\r\n",
+                "\x1b[?25h\r\n",
+                "end\r\n"
+            )),
+            not_alive(ProcessName::Xvb),
+            &Arc::new(Mutex::new(PubXvbApi::new())),
+            not_alive(ProcessName::P2pool),
+            &P2pool::default(),
+            &Arc::new(Mutex::new(ImgP2pool::new())),
+            &XmrigProxy::default(),
+        ));
+        assert_eq!(
+            *output_pub.lock().unwrap(),
+            " * ABOUT XMRig-Proxy/6.22\nnew job from pool\nend\n"
         );
     }
 }

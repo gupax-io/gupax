@@ -51,7 +51,7 @@ use crate::{
 use crate::{PROXY_API_PORT_DEFAULT, PROXY_PORT_DEFAULT, XMRIG_API_SUMMARY_ENDPOINT};
 use std::io::Write as IoWrite;
 
-use super::xmrig::{ImgXmrig, PubXmrigApi};
+use super::xmrig::{ImgXmrig, PubXmrigApi, printable};
 impl Helper {
     // Takes in some [State/XmrigProxy] and parses it to build the actual command arguments.
     // Returns the [Vec] of actual arguments,
@@ -72,7 +72,9 @@ impl Helper {
         let mut stdout = crate::helper::text_lines(reader);
 
         while let Some(Ok(line)) = stdout.next() {
-            let line = strip_ansi_escapes::strip_str(line);
+            let Some(line) = printable(line) else {
+                continue;
+            };
             // need to verify if node still working
             // for that need to catch "connect error"
             // only switch nodes of XvB if XvB process is used

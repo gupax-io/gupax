@@ -32,6 +32,13 @@ use super::Hashrate;
 use super::xmrig_proxy::ImgProxy;
 use std::process::{Child, Command, ExitStatus};
 
+// Gupax's console shows plain text, and the Windows pseudo console adds lines made
+// of escape sequences only.
+pub(super) fn printable(line: String) -> Option<String> {
+    let line = strip_ansi_escapes::strip_str(line);
+    (!line.trim().is_empty()).then_some(line)
+}
+
 // What the XMRig watchdog works on, from its start to its end.
 struct XmrigWatch {
     process: Arc<Mutex<Process>>,
@@ -90,7 +97,9 @@ impl Helper {
         let mut lines = crate::helper::text_lines(&mut reader);
         // XMRig writes why it cannot start before its banner.
         while let Some(Ok(line)) = lines.next() {
-            let line = strip_ansi_escapes::strip_str(line);
+            let Some(line) = printable(line) else {
+                continue;
+            };
             if line.contains("ABOUT") {
                 info!("Xmrig is started");
             }
