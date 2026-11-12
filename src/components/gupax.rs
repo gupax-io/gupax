@@ -90,6 +90,21 @@ impl Gupax {
             _ => false,
         }
     }
+    #[cfg(unix)]
+    pub fn path_is_executable(path: &str) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        match crate::disk::into_absolute_path(path.to_string()) {
+            Ok(path) => path
+                .metadata()
+                .is_ok_and(|file| file.permissions().mode() & 0o111 != 0),
+            _ => false,
+        }
+    }
+    // Windows has no permission to execute a file.
+    #[cfg(not(unix))]
+    pub fn path_is_executable(_: &str) -> bool {
+        true
+    }
     // Checks if a path is a valid path to a directory.
     pub fn path_is_dir(path: &str) -> bool {
         let path = path.to_string();
@@ -166,5 +181,23 @@ impl Gupax {
 
             file_window.lock().unwrap().thread = false;
         });
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::Gupax;
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_binary_runs_only_with_the_permission_to_execute() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("p2pool");
+        std::fs::write(&binary, "").unwrap();
+        std::fs::set_permissions(&binary, Permissions::from_mode(0o644)).unwrap();
+        assert!(!Gupax::path_is_executable(binary.to_str().unwrap()));
+        std::fs::set_permissions(&binary, Permissions::from_mode(0o755)).unwrap();
+        assert!(Gupax::path_is_executable(binary.to_str().unwrap()));
     }
 }

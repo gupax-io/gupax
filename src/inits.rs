@@ -191,6 +191,8 @@ pub fn init_auto(app: &mut App) {
             warn!("Gupax | Node path is not a file! Skipping auto-node...");
         } else if !check_binary_path(&app.state.gupax.node_path, ProcessName::Node) {
             warn!("Gupax | Node path is not valid! Skipping auto-node...");
+        } else if !Gupax::path_is_executable(&app.state.gupax.node_path) {
+            warn!("Gupax | Node path is not allowed to run! Skipping auto-node...");
         } else if ProcessName::Node
             .is_process_running(&mut app.helper.lock().unwrap().sys_info.lock().unwrap())
         {
@@ -225,6 +227,8 @@ pub fn init_auto(app: &mut App) {
             warn!("Gupax | P2Pool path is not a file! Skipping auto-p2pool...");
         } else if !check_binary_path(&app.state.gupax.p2pool_path, ProcessName::P2pool) {
             warn!("Gupax | P2Pool path is not valid! Skipping auto-p2pool...");
+        } else if !Gupax::path_is_executable(&app.state.gupax.p2pool_path) {
+            warn!("Gupax | P2Pool path is not allowed to run! Skipping auto-p2pool...");
         } else if crate::helper::ProcessName::P2pool
             .is_process_running(&mut app.helper.lock().unwrap().sys_info.lock().unwrap())
         {
@@ -261,6 +265,8 @@ pub fn init_auto(app: &mut App) {
             warn!("Gupax | Xmrig-Proxy path is not a file! Skipping auto-xmrig_proxy...");
         } else if !check_binary_path(&app.state.gupax.xmrig_proxy_path, ProcessName::XmrigProxy) {
             warn!("Gupax | Xmrig-Proxy path is not valid! Skipping auto-xmrig_proxy...");
+        } else if !Gupax::path_is_executable(&app.state.gupax.xmrig_proxy_path) {
+            warn!("Gupax | Xmrig-Proxy path is not allowed to run! Skipping auto-xmrig_proxy...");
         } else if crate::helper::ProcessName::XmrigProxy
             .is_process_running(&mut app.helper.lock().unwrap().sys_info.lock().unwrap())
         {
@@ -289,6 +295,8 @@ pub fn init_auto(app: &mut App) {
             warn!("Gupax | XMRig path is not an executable! Skipping auto-xmrig...");
         } else if !check_binary_path(&app.state.gupax.xmrig_path, ProcessName::Xmrig) {
             warn!("Gupax | XMRig path is not valid! Skipping auto-xmrig...");
+        } else if !Gupax::path_is_executable(&app.state.gupax.xmrig_path) {
+            warn!("Gupax | XMRig path is not allowed to run! Skipping auto-xmrig...");
         } else if crate::helper::ProcessName::Xmrig
             .is_process_running(&mut app.helper.lock().unwrap().sys_info.lock().unwrap())
         {

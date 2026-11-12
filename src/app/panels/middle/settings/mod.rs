@@ -245,6 +245,12 @@ fn path_binary(
                 Label::new(RichText::new(msg + " ❌").color(RED)),
             )
             .on_hover_text(name.msg_binary_path_invalid());
+        } else if !Gupax::path_is_executable(path) {
+            ui.add_sized(
+                [0.0, height],
+                Label::new(RichText::new(msg + " ❌").color(RED)),
+            )
+            .on_hover_text(name.msg_binary_path_not_executable());
         } else {
             ui.add_sized(
                 [0.0, height],

@@ -762,6 +762,9 @@ impl crate::app::App {
             if !crate::components::update::check_binary_path(path, name) {
                 return Err(name.msg_binary_path_invalid().to_string());
             }
+            if !Gupax::path_is_executable(path) {
+                return Err(name.msg_binary_path_not_executable().to_string());
+            }
         }
         Ok(())
     }
