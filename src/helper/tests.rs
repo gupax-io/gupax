@@ -260,7 +260,6 @@ Uptime         = 0h 2m 4s
         let output_parse = Arc::new(Mutex::new(String::from(
             "[2022-02-12 12:49:30.311]  net      no active pools, stop mining",
         )));
-        let output_pub = Arc::new(Mutex::new(String::new()));
         let elapsed = std::time::Duration::from_secs(60);
         let process = Arc::new(Mutex::new(Process::new(
             ProcessName::Xmrig,
@@ -283,10 +282,9 @@ Uptime         = 0h 2m 4s
         let p2pool_state = P2pool::default();
 
         process.lock().unwrap().state = ProcessState::Alive;
+        process.lock().unwrap().output_parse = output_parse;
         PubXmrigApi::update_from_output(
             &mut public.lock().unwrap(),
-            &output_parse,
-            &output_pub,
             elapsed,
             &mut process.lock().unwrap(),
             &process_p2pool.lock().unwrap(),
@@ -302,10 +300,9 @@ Uptime         = 0h 2m 4s
         let output_parse = Arc::new(Mutex::new(String::from(
             "[2022-02-12 12:49:30.311]  net      new job from 192.168.2.1:3333 diff 402K algo rx/0 height 2241142 (11 tx)",
         )));
+        process.lock().unwrap().output_parse = output_parse;
         PubXmrigApi::update_from_output(
             &mut public.lock().unwrap(),
-            &output_parse,
-            &output_pub,
             elapsed,
             &mut process.lock().unwrap(),
             &process_p2pool.lock().unwrap(),
@@ -644,6 +641,8 @@ Uptime         = 0h 2m 4s
     }
 
     use crate::helper::p2pool::PubP2poolApi;
+    use crate::helper::xrig::xmrig::PubXmrigApi;
+    use crate::helper::xrig::xmrig_proxy::PubXmrigProxyApi;
     use crate::helper::{
         ProcessSignal, check_died, ended_output, exited, not_alive, output, run_in_folder_of,
         shell_command, signal_end, sleeping, spawn_piped, started, text_lines, within,
@@ -996,5 +995,61 @@ Uptime         = 0h 2m 4s
             .map(Result::unwrap)
             .collect::<Vec<_>>();
         assert_eq!(lines, ["data dir C:\\Jos\u{fffd}", "last"]);
+    }
+
+    #[test]
+    fn xmrig_console_shows_the_lines_left_to_show() {
+        let process = not_alive(ProcessName::Xmrig);
+        *process.lock().unwrap().output_pub.lock().unwrap() = "to show\n".to_string();
+        *process.lock().unwrap().output_parse.lock().unwrap() = "to parse\n".to_string();
+        let mut public = PubXmrigApi::new();
+        PubXmrigApi::update_from_output(
+            &mut public,
+            Duration::ZERO,
+            &mut process.lock().unwrap(),
+            &not_alive(ProcessName::P2pool).lock().unwrap(),
+            &not_alive(ProcessName::XmrigProxy).lock().unwrap(),
+            &Arc::new(Mutex::new(ImgProxy::new())),
+            &Arc::new(Mutex::new(ImgP2pool::new())),
+            &XmrigProxy::default(),
+            &P2pool::default(),
+        );
+        assert_eq!(public.output, "to show\n");
+        assert!(
+            process
+                .lock()
+                .unwrap()
+                .output_parse
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn xmrig_proxy_console_shows_the_lines_left_to_show() {
+        let process = not_alive(ProcessName::XmrigProxy);
+        *process.lock().unwrap().output_pub.lock().unwrap() = "to show\n".to_string();
+        *process.lock().unwrap().output_parse.lock().unwrap() = "to parse\n".to_string();
+        let mut public = PubXmrigProxyApi::new();
+        PubXmrigProxyApi::update_from_output(
+            &mut public,
+            Duration::ZERO,
+            &mut process.lock().unwrap(),
+            &not_alive(ProcessName::P2pool).lock().unwrap(),
+            &Arc::new(Mutex::new(ImgP2pool::new())),
+            &P2pool::default(),
+            &XmrigProxy::default(),
+        );
+        assert_eq!(public.output, "to show\n");
+        assert!(
+            process
+                .lock()
+                .unwrap()
+                .output_parse
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
     }
 }
