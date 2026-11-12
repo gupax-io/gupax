@@ -164,6 +164,7 @@ impl App {
                 self.state.gupax.clone(),
                 self.binaries_version.clone(),
                 self.restart.clone(),
+                self.xmrig.clone(),
             );
         }
         });
@@ -235,6 +236,7 @@ impl App {
                     self.state.gupax.clone(),
                     self.binaries_version.clone(),
                     self.restart.clone(),
+                    self.xmrig.clone(),
                 );
             }
         });

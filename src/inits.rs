@@ -360,6 +360,7 @@ pub fn init_auto(app: &mut App) {
         let binaries_version = app.binaries_version.clone();
         let update = app.update.clone();
         let restart = app.restart.clone();
+        let xmrig = app.xmrig.clone();
         thread::spawn(move || {
             loop {
                 update.update_all(
@@ -367,6 +368,7 @@ pub fn init_auto(app: &mut App) {
                     gupax_settings.clone(),
                     binaries_version.clone(),
                     restart.clone(),
+                    xmrig.clone(),
                 );
                 thread::sleep(Duration::from_hours(24));
             }

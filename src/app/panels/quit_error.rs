@@ -383,6 +383,7 @@ impl crate::app::App {
                         self.state.gupax.clone(),
                         self.binaries_version.clone(),
                         self.restart.clone(),
+                        self.xmrig.clone(),
                     );
                 },
                 "Yes downgrade" => {
@@ -392,6 +393,7 @@ impl crate::app::App {
                     self.state.gupax.clone(),
                     self.binaries_version.clone(),
                     self.restart.clone(),
+                    self.xmrig.clone(),
                 );
                                 }
                             },
@@ -401,6 +403,7 @@ impl crate::app::App {
                     self.state.gupax.clone(),
                     self.binaries_version.clone(),
                     self.restart.clone(),
+                    self.xmrig.clone(),
                 );
                             }
                 _ => panic!("unknown button")
