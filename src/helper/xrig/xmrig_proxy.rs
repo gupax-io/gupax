@@ -22,6 +22,7 @@ use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::io::Read;
+#[cfg(not(target_os = "windows"))]
 use std::process::Command;
 use std::time::Duration;
 use std::{
@@ -369,11 +370,15 @@ impl Helper {
         // 1b. Create command
         debug!("XMRig-Proxy | Creating command...");
 
+        #[cfg(not(target_os = "windows"))]
         let mut cmd = Command::new(&path);
+        #[cfg(target_os = "windows")]
+        let mut cmd = elevated_helper::conpty_command(&path, &args);
         #[cfg(target_os = "windows")]
         use std::os::windows::process::CommandExt;
         #[cfg(target_os = "windows")]
         cmd.creation_flags(0x08000000);
+        #[cfg(not(target_os = "windows"))]
         cmd.args(args);
         crate::helper::run_in_folder_of(&mut cmd, &path);
         // 1c. Create child
