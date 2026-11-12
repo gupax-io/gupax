@@ -646,7 +646,7 @@ Uptime         = 0h 2m 4s
     use crate::helper::p2pool::PubP2poolApi;
     use crate::helper::{
         ProcessSignal, check_died, ended_output, exited, not_alive, output, run_in_folder_of,
-        shell_command, signal_end, sleeping, spawn_piped, started, within,
+        shell_command, signal_end, sleeping, spawn_piped, started, text_lines, within,
     };
     use crate::utils::constants::HORI_CONSOLE;
     use std::io::{BufRead, Read, Write};
@@ -977,5 +977,13 @@ Uptime         = 0h 2m 4s
         assert!(!Process::raise(&process, ProcessSignal::Restart));
         assert_eq!(process.lock().unwrap().signal, ProcessSignal::None);
         assert_eq!(process.lock().unwrap().state, ProcessState::Alive);
+    }
+
+    #[test]
+    fn lines_after_a_line_in_another_encoding_are_read() {
+        let lines = text_lines(b"data dir C:\\Jos\xe9\r\nlast\n".as_slice())
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+        assert_eq!(lines, ["data dir C:\\Jos\u{fffd}", "last"]);
     }
 }

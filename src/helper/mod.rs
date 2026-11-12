@@ -1161,6 +1161,16 @@ fn run_in_folder_of(cmd: &mut std::process::Command, binary: &Path) {
     }
 }
 
+// Processes print paths and messages of other nodes as they come, in any encoding.
+fn text_lines(reader: impl std::io::Read) -> impl Iterator<Item = std::io::Result<String>> {
+    use std::io::BufRead;
+    std::io::BufReader::new(reader).split(b'\n').map(|line| {
+        line.map(|line| {
+            String::from_utf8_lossy(line.strip_suffix(b"\r").unwrap_or(&line)).into_owned()
+        })
+    })
+}
+
 // The shell of the platform, as a program and the arguments that run its script.
 #[cfg(all(test, windows))]
 fn shell(windows: &str, _unix: &str) -> (PathBuf, Vec<String>) {

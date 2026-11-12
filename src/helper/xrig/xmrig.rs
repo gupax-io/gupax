@@ -17,7 +17,7 @@ use reqwest::header::AUTHORIZATION;
 use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
-use std::io::{BufRead, BufReader, Write as IoWrite};
+use std::io::Write as IoWrite;
 #[cfg(target_os = "linux")]
 use std::io::{PipeReader, PipeWriter};
 use std::path::Path;
@@ -71,7 +71,7 @@ impl Helper {
         process: Arc<Mutex<Process>>,
     ) {
         let mut i = 0;
-        let mut lines = BufReader::new(&mut reader).lines();
+        let mut lines = crate::helper::text_lines(&mut reader);
         // Run a ANSI escape sequence filter for the first few lines.
         while let Some(Ok(line)) = lines.next() {
             let line = strip_ansi_escapes::strip_str(line);

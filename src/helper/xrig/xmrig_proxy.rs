@@ -69,8 +69,7 @@ impl Helper {
         p2pool_img: &Arc<Mutex<ImgP2pool>>,
         proxy_state: &XmrigProxy,
     ) {
-        use std::io::BufRead;
-        let mut stdout = std::io::BufReader::new(reader).lines();
+        let mut stdout = crate::helper::text_lines(reader);
 
         // Run a ANSI escape sequence filter for the first few lines.
         let mut i = 0;
