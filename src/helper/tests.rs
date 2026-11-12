@@ -934,4 +934,48 @@ Uptime         = 0h 2m 4s
         ));
         assert_eq!(reader.join().unwrap(), ProcessState::Middle);
     }
+
+    #[test]
+    fn a_raised_signal_leaves_the_process_stopping() {
+        let process = not_alive(ProcessName::P2pool);
+        process.lock().unwrap().state = ProcessState::Alive;
+        Process::raise(&process, ProcessSignal::Stop);
+        assert_eq!(process.lock().unwrap().signal, ProcessSignal::Stop);
+        assert_eq!(process.lock().unwrap().state, ProcessState::Middle);
+    }
+
+    #[test]
+    fn a_stop_of_a_process_that_exited_leaves_it_exited() {
+        let process = not_alive(ProcessName::P2pool);
+        process.lock().unwrap().state = ProcessState::Failed;
+        Process::raise(&process, ProcessSignal::Stop);
+        assert_eq!(process.lock().unwrap().signal, ProcessSignal::None);
+        assert_eq!(process.lock().unwrap().state, ProcessState::Failed);
+    }
+
+    #[test]
+    fn a_restart_of_a_process_that_exited_starts_it() {
+        let process = not_alive(ProcessName::P2pool);
+        Process::raise(&process, ProcessSignal::Restart);
+        assert_eq!(process.lock().unwrap().state, ProcessState::Waiting);
+    }
+
+    #[test]
+    fn a_stop_reaches_xvb_while_its_requests_fail() {
+        let process = not_alive(ProcessName::Xvb);
+        process.lock().unwrap().state = ProcessState::Failed;
+        Process::raise(&process, ProcessSignal::Stop);
+        assert_eq!(process.lock().unwrap().signal, ProcessSignal::Stop);
+        assert_eq!(process.lock().unwrap().state, ProcessState::Middle);
+    }
+
+    #[test]
+    fn a_restart_of_a_node_gupax_did_not_start_is_left_to_it() {
+        let process = not_alive(ProcessName::Node);
+        process.lock().unwrap().state = ProcessState::Alive;
+        process.lock().unwrap().external = true;
+        assert!(!Process::raise(&process, ProcessSignal::Restart));
+        assert_eq!(process.lock().unwrap().signal, ProcessSignal::None);
+        assert_eq!(process.lock().unwrap().state, ProcessState::Alive);
+    }
 }

@@ -144,8 +144,7 @@ impl Helper {
     // Just sets some signals for the watchdog thread to pick up on.
     pub fn stop_node(helper: &Arc<Mutex<Self>>) {
         info!("Node | Attempting to stop...");
-        helper.lock().unwrap().node.lock().unwrap().signal = ProcessSignal::Stop;
-        helper.lock().unwrap().node.lock().unwrap().state = ProcessState::Middle;
+        Process::raise(&helper.lock().unwrap().node, ProcessSignal::Stop);
         let gui_api = Arc::clone(&helper.lock().unwrap().gui_api_node);
         let pub_api = Arc::clone(&helper.lock().unwrap().pub_api_node);
         *pub_api.lock().unwrap() = PubNodeApi::new();
@@ -157,8 +156,9 @@ impl Helper {
     // Basically calls to kill the current p2pool, waits a little, then starts the below function in a a new thread, then exit.
     pub fn restart_node(helper: &Arc<Mutex<Self>>, state: &Node, path: &Path) {
         info!("Node | Attempting to restart...");
-        helper.lock().unwrap().node.lock().unwrap().signal = ProcessSignal::Restart;
-        helper.lock().unwrap().node.lock().unwrap().state = ProcessState::Middle;
+        if !Process::raise(&helper.lock().unwrap().node, ProcessSignal::Restart) {
+            return;
+        }
 
         let helper = Arc::clone(helper);
         let state = state.clone();

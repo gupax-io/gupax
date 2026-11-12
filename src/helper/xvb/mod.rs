@@ -59,8 +59,7 @@ impl Helper {
     // Just sets some signals for the watchdog thread to pick up on.
     pub fn stop_xvb(helper: &Arc<Mutex<Self>>) {
         info!("XvB | Attempting to stop...");
-        helper.lock().unwrap().xvb.lock().unwrap().signal = ProcessSignal::Stop;
-        helper.lock().unwrap().xvb.lock().unwrap().state = ProcessState::Middle;
+        Process::raise(&helper.lock().unwrap().xvb, ProcessSignal::Stop);
     }
     pub fn restart_xvb(
         helper: &Arc<Mutex<Self>>,
@@ -70,8 +69,7 @@ impl Helper {
         state_xp: &crate::disk::state::XmrigProxy,
     ) {
         info!("XvB | Attempting to restart...");
-        helper.lock().unwrap().xvb.lock().unwrap().signal = ProcessSignal::Restart;
-        helper.lock().unwrap().xvb.lock().unwrap().state = ProcessState::Middle;
+        Process::raise(&helper.lock().unwrap().xvb, ProcessSignal::Restart);
         let helper = helper.clone();
         let state_xvb = state_xvb.clone();
         let state_p2pool = state_p2pool.clone();
