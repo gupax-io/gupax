@@ -18,8 +18,6 @@ use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::io::Write as IoWrite;
-#[cfg(target_os = "linux")]
-use std::io::{PipeReader, PipeWriter};
 use std::path::Path;
 use std::{
     path::PathBuf,
@@ -30,7 +28,9 @@ use std::{
 
 use super::Hashrate;
 use super::xmrig_proxy::ImgProxy;
-use std::process::{Child, Command, ExitStatus};
+#[cfg(not(target_os = "windows"))]
+use std::process::Command;
+use std::process::{Child, ExitStatus};
 
 // Gupax's console shows plain text, and the Windows pseudo console adds lines made
 // of escape sequences only.
@@ -73,7 +73,13 @@ impl crate::helper::Kill for XmrigChild {
         self.child.try_wait()
     }
     fn wait(&mut self) -> std::io::Result<ExitStatus> {
-        self.child.wait()
+        let status = self.child.wait()?;
+        // XMRig ends with STATUS_CONTROL_C_EXIT on a Ctrl+C that comes before its handler.
+        #[cfg(target_os = "windows")]
+        if status.code() == Some(0xC000013A_u32 as i32) {
+            return Ok(ExitStatus::default());
+        }
+        Ok(status)
     }
 }
 
@@ -195,7 +201,7 @@ impl Helper {
             process_p2pool.lock().unwrap().is_alive(),
             &p2pool_img.lock().unwrap(),
         );
-        helper.lock().unwrap().xmrig.lock().unwrap().state = ProcessState::Middle;
+        helper.lock().unwrap().xmrig.lock().unwrap().set_starting();
         let api_ip_port = Self::mutate_img_xmrig(helper, state, p2pool_stratum_port);
         let mode = if state.simple {
             StartOptionsMode::Simple
@@ -408,21 +414,136 @@ impl Helper {
 
     // We spawn [pkexec] on Unix, with XMRig being the argument.
     #[cfg(target_os = "linux")]
-    fn create_xmrig_cmd_unix(
-        args: Vec<String>,
-        path_binary: PathBuf,
-        stdin_reader: PipeReader,
-        stdout_writer: PipeWriter,
-    ) -> Command {
-        use std::process::Stdio;
-
+    fn create_xmrig_cmd_unix(args: Vec<String>, path_binary: PathBuf) -> Command {
         let mut cmd = Command::new("pkexec");
         cmd.arg(path_binary.clone());
         cmd.args(args);
-        cmd.current_dir(path_binary.as_path().parent().unwrap());
-        cmd.stdin(Stdio::from(stdin_reader));
-        cmd.stdout(Stdio::from(stdout_writer));
+        crate::helper::run_in_folder_of(&mut cmd, &path_binary);
         cmd
+    }
+
+    // pkexec runs XMRig once its admin prompt is answered, and XMRig then prints its banner. Until
+    // then, the kill of pkexec cancels the prompt.
+    #[cfg(target_os = "linux")]
+    fn prompt_answered(
+        pkexec: &mut Child,
+        output: std::io::PipeReader,
+        stopped: impl Fn() -> bool,
+    ) -> std::io::Result<Option<Box<dyn std::io::Read + Send>>> {
+        use std::io::Read;
+        let (sender, first_read) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let mut output = output;
+            let mut first = vec![0; 4096];
+            let read = output.read(&mut first).map(|n| {
+                first.truncate(n);
+                first
+            });
+            let _ = sender.send((read, output));
+        });
+        let ready = || {
+            first_read
+                .try_recv()
+                .map_err(|_| std::io::Error::from(std::io::ErrorKind::WouldBlock))
+        };
+        let prompted = super::wait_ready(pkexec, ready, stopped, "pkexec", "XMRig wrote a line")?;
+        let Some((first, output)) = prompted else {
+            return Ok(None);
+        };
+        // The output starts with what was read while waiting.
+        Ok(Some(Box::new(std::io::Cursor::new(first?).chain(output))))
+    }
+
+    // osascript opens the input of XMRig once the user accepted its admin prompt.
+    #[cfg(any(target_os = "macos", all(test, unix)))]
+    fn open_input(
+        input: &Path,
+        log: &Path,
+        prompt: &mut Child,
+        program: &str,
+        stopped: impl Fn() -> bool,
+    ) -> std::io::Result<Option<std::fs::File>> {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Fails at once while nothing reads the input, and its writes return at once on a full
+        // input.
+        let open = || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(input)
+                .map_err(|e| match e.raw_os_error() {
+                    Some(libc::ENXIO) => std::io::ErrorKind::WouldBlock.into(),
+                    _ => e,
+                })
+        };
+        super::wait_ready(prompt, open, stopped, program, "XMRig read its input").map_err(|e| {
+            let reason = std::fs::read_to_string(log).unwrap_or_default();
+            std::io::Error::new(e.kind(), format!("{e}\n{}", reason.trim()).trim_end())
+        })
+    }
+
+    // The root shell of a cancelled start can come late, and would read the input of the next
+    // start under the same name.
+    #[cfg(any(target_os = "macos", all(test, unix)))]
+    fn input_name() -> String {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static STARTS: AtomicU32 = AtomicU32::new(0);
+        let start = STARTS.fetch_add(1, Ordering::Relaxed);
+        format!("xmrig_input_{}_{start}", std::process::id())
+    }
+
+    // The input of XMRig is a FIFO, and its output the log that its -l option writes.
+    #[cfg(target_os = "macos")]
+    fn start_macos(
+        args: Vec<String>,
+        path: PathBuf,
+        stopped: impl Fn() -> bool,
+    ) -> std::io::Result<Option<(Child, std::fs::File, std::fs::File)>> {
+        use nix::sys::stat::Mode;
+        let temp_dir = std::env::temp_dir();
+        let input_path = temp_dir.join(Self::input_name());
+        let output_path = temp_dir.join("xmrig_output");
+        let _ = std::fs::remove_file(&output_path);
+        std::fs::create_dir_all(&temp_dir)?;
+        nix::unistd::mkfifo(&input_path, Mode::S_IRWXU)?;
+        let started = Self::start_with_fifo(args, path, &input_path, &output_path, stopped);
+        // Its name serves until both ends are open.
+        let _ = std::fs::remove_file(&input_path);
+        started
+    }
+
+    #[cfg(target_os = "macos")]
+    fn start_with_fifo(
+        args: Vec<String>,
+        path: PathBuf,
+        input_path: &Path,
+        output_path: &Path,
+        stopped: impl Fn() -> bool,
+    ) -> std::io::Result<Option<(Child, std::fs::File, std::fs::File)>> {
+        // Opened before the admin prompt, after which a failure would leave XMRig out of reach.
+        let output = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(output_path)?;
+        let mut cmd = Self::create_xmrig_cmd_macos(args, path, input_path, output_path)?;
+        // The console then shows why osascript failed.
+        #[cfg(target_arch = "x86_64")]
+        cmd.stderr(std::fs::OpenOptions::new().append(true).open(output_path)?);
+        let mut prompt = cmd.spawn()?;
+        let program = cmd.get_program().to_string_lossy();
+        let input = Self::open_input(input_path, output_path, &mut prompt, &program, stopped)
+            // The admin prompt would stay open.
+            .inspect_err(|_| {
+                let _ = prompt.kill();
+            })?;
+        let Some(input) = input else {
+            return Ok(None);
+        };
+        #[cfg(target_arch = "x86_64")]
+        (&input).write_all(b"go\n")?;
+        Ok(Some((prompt, input, output)))
     }
 
     #[cfg(target_os = "macos")]
@@ -431,7 +552,7 @@ impl Helper {
         path: PathBuf,
         input_path: &Path,
         output_path: &Path,
-    ) -> Command {
+    ) -> std::io::Result<Command> {
         args.push("-l".to_string());
         args.push(output_path.display().to_string());
 
@@ -440,59 +561,48 @@ impl Helper {
             if #[cfg(target_arch = "aarch64")] {
                 use std::fs::{File, OpenOptions};
 
-                let out_file = File::create(output_path).unwrap();
+                let out_file = File::create(output_path)?;
                 let in_file = OpenOptions::new()
                     .read(true)
                     .write(true)
-                    .open(input_path).unwrap();
+                    .open(input_path)?;
                 let mut cmd = Command::new(&path);
                 cmd.args(args);
+                // XMRig writes why its arguments are wrong there.
+                cmd.stderr(out_file.try_clone()?);
                 cmd.stdout(out_file);
                 cmd.stdin(in_file);
             } else {
                 let mut cmd = Command::new("osascript");
                 cmd.arg("-e");
-                let arg = format!(
-                    "do shell script \"{} {} <> {}\" with administrator privileges",
-                    path.display(),
-                    args.join(" "),
-                    input_path.display()
-                );
-                cmd.arg(arg);
+                cmd.arg(Self::admin_prompt(&Self::xmrig_script(&path, &args, input_path)));
             }
         );
-        cmd.current_dir(path.as_path().parent().unwrap());
-        cmd
+        crate::helper::run_in_folder_of(&mut cmd, &path);
+        Ok(cmd)
     }
-    // Gupax should be admin on Windows, so just spawn XMRig normally.
-    #[cfg(target_os = "windows")]
-    fn create_xmrig_cmd_windows(
-        args: Vec<String>,
-        path_binary: PathBuf,
-        stdin_name: &str,
-        stdout_name: &str,
-    ) -> Command {
-        let gupax_exe_path = std::env::current_exe().unwrap();
 
-        // Launch helper yourself however you want
-        let helper_args = format!(
-            "--elevated-helper --name-stdin-pipe {stdin_name} --name-stdout-pipe {stdout_name} --binary-path {} --arguments={}",
-            path_binary.display(),
-            args.join(",")
-        );
+    // The command of the root shell that runs XMRig after the macOS admin prompt.
+    #[cfg(any(all(target_os = "macos", target_arch = "x86_64"), all(test, unix)))]
+    fn xmrig_script(path: &Path, args: &[String], input: &Path) -> String {
+        let quote = |arg: &str| shell_escape::unix::escape(arg.into()).into_owned();
+        let xmrig = std::iter::once(path.display().to_string())
+            .chain(args.iter().cloned())
+            .map(|arg| quote(&arg))
+            .collect::<Vec<_>>()
+            .join(" ");
+        // Gupax writes "go" once it opened the input, which a cancelled start removes.
+        format!(
+            "[ -p {0} ] && exec <> {0} && read go && [ \"$go\" = go ] && exec {xmrig}",
+            quote(&input.display().to_string())
+        )
+    }
 
-        use std::os::windows::process::CommandExt;
-        let mut cmd = std::process::Command::new("powershell");
-        cmd.creation_flags(0x08000000);
-        cmd.args([
-            "-Command",
-            &format!(
-                "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -Wait",
-                gupax_exe_path.display(),
-                helper_args
-            ),
-        ]);
-        cmd
+    // `do shell script` takes the command as an AppleScript string.
+    #[cfg(any(all(target_os = "macos", target_arch = "x86_64"), all(test, unix)))]
+    fn admin_prompt(script: &str) -> String {
+        let script = script.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("do shell script \"{script}\" with administrator privileges")
     }
 
     #[cold]
@@ -501,71 +611,39 @@ impl Helper {
     // This isn't actually async, a tokio runtime is unfortunately needed because [Hyper] is an async library (HTTP API calls)
     #[tokio::main]
     async fn spawn_xmrig_watchdog(watch: XmrigWatch, args: Vec<String>, path: PathBuf) {
+        let stopped = || watch.process.lock().unwrap().signal == ProcessSignal::Stop;
         cfg_if! {
             if #[cfg(windows)] {
-
-        use uuid::Uuid;
-        let id = Uuid::new_v4();
-        let stdin_name = format!(r"xmrig_stdin_{}", id);
-        let stdout_name = format!(r"xmrig_stdout_{}", id);
-        let stdin_pipe_path = format!(r"\\.\pipe\{}", stdin_name);
-        let stdout_pipe_path = format!(r"\\.\pipe\{}", stdout_name);
-
-        use elevated_helper::interprocess::os::windows::named_pipe::*;
-
-        let stdin_listener =  PipeListenerOptions::new()
-            .path(Path::new(&stdin_pipe_path))
-            .mode(PipeMode::Bytes)
-            .create_duplex::<pipe_mode::Bytes>().unwrap();
-
-        let stdout_listener = PipeListenerOptions::new()
-            .path(Path::new(&stdout_pipe_path))
-            .mode(PipeMode::Bytes)
-            .create_duplex::<pipe_mode::Bytes>().unwrap();
-
-                    let mut cmd = Self::create_xmrig_cmd_windows(args, path, &stdin_name, &stdout_name);
-            let child_pty = cmd.spawn().unwrap();
-
-
-        let stdin: Box<dyn IoWrite + Send> = Box::new(stdin_listener.accept().unwrap());
-        let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_listener.accept().unwrap());
-
-                        } else if #[cfg(target_os = "linux")] {
-                    let (stdin_reader, stdin_writer) = std::io::pipe().unwrap();
-                    let (stdout_reader, stdout_writer) = std::io::pipe().unwrap();
-                    let mut cmd = Self::create_xmrig_cmd_unix(args, path, stdin_reader, stdout_writer);
-            let child_pty = cmd.spawn().unwrap();
-                    let stdin: Box<dyn IoWrite + Send> = Box::new(stdin_writer);
-                    let stdout: Box<dyn std::io::Read + Send> = Box::new(stdout_reader);
-
-                        } else if #[cfg(target_os = "macos")] {
-                    use nix::sys::stat::Mode;
-                    let temp_dir = std::env::temp_dir();
-                    let mut input_path = temp_dir.to_path_buf();
-                    input_path.push("xmrig_input");
-                    let mut output_path = temp_dir.to_path_buf();
-                    output_path.push("xmrig_output");
-
-
-                    let _ = std::fs::remove_file(&input_path);
-                    let _ = std::fs::remove_file(&output_path);
-
-                    std::fs::create_dir_all(temp_dir).unwrap();
-                    nix::unistd::mkfifo(&input_path, Mode::S_IRWXU).unwrap();
-
-                    std::fs::File::create(&output_path).unwrap();
-
-                               let mut cmd = Self::create_xmrig_cmd_macos(args, path, &input_path, &output_path);
-            let child_pty = cmd.spawn().unwrap();
-                    let input_fifo = std::fs::OpenOptions::new()
-                        .write(true)
-                        .open(input_path).unwrap();
-
-                    let stdin: Box<dyn IoWrite + Send> = Box::new(input_fifo);
-                    let stdout: Box<dyn std::io::Read + Send> = Box::new(std::fs::File::open(&output_path).unwrap());
-
-            }        }
-
+                let started = super::elevated::start(
+                    &path,
+                    &args,
+                    super::elevated::powershell,
+                    stopped,
+                    crate::components::update::GUPAX_REPLACED
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                );
+            } else if #[cfg(target_os = "linux")] {
+                let started = crate::helper::spawn_piped(Self::create_xmrig_cmd_unix(args, path))
+                    .and_then(|(mut pkexec, stdin, stdout)| {
+                        let stdout = Self::prompt_answered(&mut pkexec, stdout, stopped)?;
+                        Ok(stdout.map(|stdout| (pkexec, stdin, stdout)))
+                    });
+            } else if #[cfg(target_os = "macos")] {
+                let started = Self::start_macos(args, path, stopped);
+            }
+        }
+        let Some(started) = started.transpose() else {
+            info!("XMRig Watchdog | Stopped before it started");
+            watch.process.lock().unwrap().cancel_start();
+            return;
+        };
+        let Some((child_pty, stdin, stdout)) = crate::helper::started(
+            started,
+            &mut watch.process.lock().unwrap(),
+            &mut watch.gui_api.lock().unwrap().output,
+        ) else {
+            return;
+        };
         Self::watch_xmrig(child_pty, stdin, stdout, watch).await;
     }
 
@@ -1144,5 +1222,199 @@ mod tests {
             *output_pub.lock().unwrap(),
             "Error: C:\\XMRig\\xmrig.exe: not found\n * ABOUT XMRig/6.22\n"
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn xmrig_ended_by_the_ctrl_c_of_a_stop_stopped_successfully() {
+        // STATUS_CONTROL_C_EXIT
+        let (child, stdin, _) = exited("exit -1073741510");
+        let mut xmrig_run = XmrigChild { child, stdin };
+        assert!(crate::helper::Kill::wait(&mut xmrig_run).unwrap().success());
+    }
+
+    // A FIFO, as the macOS start makes for the input of XMRig.
+    #[cfg(unix)]
+    fn fifo(dir: &tempfile::TempDir) -> PathBuf {
+        let fifo = dir.path().join("xmrig_input");
+        assert!(
+            Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fifo
+    }
+
+    // Opens the input of XMRig while `prompt` runs, as the macOS start does.
+    #[cfg(unix)]
+    fn open_input(
+        dir: &tempfile::TempDir,
+        mut prompt: Command,
+        stopped: bool,
+    ) -> (std::io::Result<Option<std::fs::File>>, Child) {
+        let (input, log) = (dir.path().join("xmrig_input"), dir.path().join("log"));
+        prompt.stderr(std::fs::File::create(&log).unwrap());
+        let mut prompt = prompt.spawn().unwrap();
+        within(move || {
+            let opened = Helper::open_input(&input, &log, &mut prompt, "osascript", || stopped);
+            (opened, prompt)
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn xmrig_input_opens_once_xmrig_reads_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cat = Command::new("cat");
+        cat.arg(fifo(&dir)).stdout(Stdio::null());
+        let (opened, mut xmrig_run) = open_input(&dir, cat, false);
+        assert!(opened.unwrap().is_some());
+        xmrig_run.wait().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn xmrig_input_never_blocks_the_watchdog() {
+        let dir = tempfile::tempdir().unwrap();
+        // Opens the input for reading, then sleeps.
+        let mut reader = Command::new("sh");
+        reader
+            .args(["-c", "exec 0<\"$0\"; exec sleep 30"])
+            .arg(fifo(&dir));
+        let (opened, mut reader) = open_input(&dir, reader, false);
+        let mut input = opened.unwrap().unwrap();
+        let full = within(move || input.write_all(&[0; 1 << 20]));
+        assert_eq!(full.unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        reader.kill().unwrap();
+        reader.wait().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn xmrig_input_shows_why_the_admin_prompt_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        fifo(&dir);
+        let mut prompt = Command::new("sh");
+        prompt.args([
+            "-c",
+            "echo 'execution error: User canceled. (-128)' >&2; exit 1",
+        ]);
+        let error = open_input(&dir, prompt, false).0.unwrap_err().to_string();
+        assert!(error.starts_with("osascript exited"), "{error}");
+        assert!(error.ends_with("User canceled. (-128)"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn xmrig_input_waits_no_more_once_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        fifo(&dir);
+        let mut sleep = Command::new("sleep");
+        sleep.arg("30");
+        let (opened, _) = open_input(&dir, sleep, true);
+        assert!(opened.unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn each_start_names_its_own_input() {
+        assert_ne!(Helper::input_name(), Helper::input_name());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cancelled_start_never_runs_xmrig() {
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        let xmrig_args = ["-c".to_string(), format!("touch '{}'", ran.display())];
+        // Removed by the cancel.
+        let input = dir.path().join("xmrig_input");
+        let script = Helper::xmrig_script(Path::new("/bin/sh"), &xmrig_args, &input);
+        let root_shell = Command::new("sh").arg("-c").arg(script).status().unwrap();
+        assert!(!root_shell.success());
+        assert!(!ran.exists());
+        assert!(!input.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_macos_root_shell_gives_xmrig_its_arguments_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        // A shell, which writes the arguments after its script one per line.
+        let xmrig = dir.path().join(r#"Jo's "xmrig" [x] $HOME"#);
+        std::os::unix::fs::symlink("/bin/sh", &xmrig).unwrap();
+        let written = dir.path().join("arguments");
+        let args = [
+            "--rig-id=Jo's rig",
+            "a b",
+            r#"x"y\z"#,
+            "$HOME `id`",
+            "--cuda-devices=0,1",
+        ];
+        let script = format!("printf '%s\\n' \"$@\" > '{}'", written.display());
+        let mut xmrig_args = vec!["-c".to_string(), script, "xmrig".to_string()];
+        xmrig_args.extend(args.map(String::from));
+        let input = fifo(&dir);
+        let mut root_shell = Command::new("sh")
+            .arg("-c")
+            .arg(Helper::xmrig_script(&xmrig, &xmrig_args, &input))
+            .spawn()
+            .unwrap();
+        // Kept open until the root shell read "go", which a closed input would lose.
+        let mut gupax_input = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&input)
+            .unwrap();
+        gupax_input.write_all(b"go\n").unwrap();
+        assert!(root_shell.wait().unwrap().success());
+        assert_eq!(
+            std::fs::read_to_string(written).unwrap(),
+            args.map(|arg| format!("{arg}\n")).concat()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_macos_admin_prompt_keeps_its_command_whole() {
+        assert_eq!(
+            Helper::admin_prompt(r#"'a "b"' \c"#),
+            r#"do shell script "'a \"b\"' \\c" with administrator privileges"#
+        );
+    }
+
+    // Whether pkexec, played by `script`, started XMRig, and the output of XMRig then.
+    #[cfg(target_os = "linux")]
+    fn prompt_answered(script: &'static str, stopped: bool) -> std::io::Result<Option<String>> {
+        within(move || {
+            let (mut pkexec, _stdin, stdout) =
+                crate::helper::spawn_piped(shell_command(script, script)).unwrap();
+            let stdout = Helper::prompt_answered(&mut pkexec, stdout, || stopped)?;
+            Ok(stdout.map(|stdout| std::io::read_to_string(stdout).unwrap()))
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stop_cancels_the_admin_prompt_of_xmrig() {
+        // Prints nothing, as pkexec while its prompt waits for an answer.
+        assert_eq!(prompt_answered("exec sleep 30", true).unwrap(), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn xmrig_output_starts_with_its_banner_once_the_prompt_is_answered() {
+        let output = prompt_answered("echo ABOUT; echo next", false).unwrap();
+        assert_eq!(output.unwrap(), "ABOUT\nnext\n");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_xmrig_that_left_pkexec_without_a_line_fails_its_start() {
+        // As XMRig with --background: its fork keeps the output open and writes nothing.
+        let error = prompt_answered("sleep 2 & exit 0", false).unwrap_err();
+        assert!(error.to_string().starts_with("pkexec exited"), "{error}");
     }
 }

@@ -121,6 +121,8 @@ eframe = {version="0.36.2", features=["x11", "wayland", "glow", "wgpu"]}
 # macOS
 [target.'cfg(target_os = "macos")'.dependencies]
 nix = { version = "0.31", features = ["fs"] }
+shell-escape = "0.1.5"
+libc = "0.2"
 ## activation-policy handling, see src/tray/macos.rs
 ## (winit must match the version eframe links)
 winit = "0.30"
@@ -146,7 +148,10 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 egui = {version="0.36.2", features=["callstack"]}
 mockito = "1.7.2"
 tempfile = "3.27.0"
+shell-escape = "0.1.5"
 # egui = {git="https://github.com/emilk/egui", features=["callstack"]}
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
 
 
 # Windows dependencies
@@ -157,6 +162,7 @@ is_elevated = "0.1.2"
 elevated-helper = {git="https://github.com/Cyrix126/elevated-helper"}
 uuid = "1.22"
 conpty = "0.7"
+shell-escape = "0.1.5"
 
 # Frees the pseudo console of a program that did not start.
 [patch.crates-io]

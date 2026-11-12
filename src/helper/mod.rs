@@ -232,6 +232,21 @@ impl Process {
         }
     }
 
+    pub fn is_starting(&self) -> bool {
+        self.state == ProcessState::Middle && self.signal == ProcessSignal::None
+    }
+
+    pub fn set_starting(&mut self) {
+        self.state = ProcessState::Middle;
+        self.reset_signal_on_start();
+    }
+
+    // A Stop cancelled the start, which leaves no watchdog.
+    pub fn cancel_start(&mut self) {
+        self.state = ProcessState::Dead;
+        self.signal = ProcessSignal::None;
+    }
+
     /// Clear the signal once the child is spawned: a Restart is done by
     /// then, and a Stop raised while starting still has to be carried out.
     pub fn reset_signal_on_start(&mut self) {
