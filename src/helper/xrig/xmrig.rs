@@ -6,7 +6,7 @@ use crate::helper::{Helper, ProcessName, ProcessSignal, ProcessState, check_died
 use crate::helper::{Pool, PubXvbApi, output, signal_end};
 use crate::helper::{Process, check_user_input, sleep, sleep_end_loop};
 use crate::human::HumanTime;
-use crate::miscs::{client, output_console};
+use crate::miscs::{local_client, output_console};
 use crate::regex::XMRIG_REGEX;
 use crate::utils::human::HumanNumber;
 use cfg_if::cfg_if;
@@ -697,7 +697,7 @@ impl Helper {
             }),
         );
 
-        let client = client();
+        let client = local_client();
         let start = process.lock().unwrap().start;
         let api_uri_config = {
             if !api_ip_port.ends_with('/') {

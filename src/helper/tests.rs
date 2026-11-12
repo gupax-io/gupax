@@ -1094,4 +1094,23 @@ Uptime         = 0h 2m 4s
         process.lock().unwrap().set_starting();
         assert_eq!(process.lock().unwrap().signal, ProcessSignal::Stop);
     }
+
+    #[test]
+    fn a_refused_local_api_fails_at_once() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let started = Instant::now();
+        let request = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(
+                crate::miscs::local_client()
+                    .get(format!("http://127.0.0.1:{port}"))
+                    .send(),
+            );
+        assert!(request.is_err());
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
 }

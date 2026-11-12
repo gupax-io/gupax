@@ -37,7 +37,7 @@ use crate::disk::state::{P2pool, StartOptionsMode, XmrigProxy};
 use crate::helper::p2pool::ImgP2pool;
 use crate::helper::xrig::HashrateProvider;
 use crate::human::{HumanNumber, HumanTime};
-use crate::miscs::client;
+use crate::miscs::local_client;
 use crate::{
     GUPAX_VERSION_UNDERSCORE,
     helper::{
@@ -418,7 +418,7 @@ impl Helper {
         );
 
         // set state
-        let client = client();
+        let client = local_client();
         process.lock().unwrap().state = ProcessState::NotMining;
         process.lock().unwrap().reset_signal_on_start();
         // reset stats
