@@ -609,9 +609,6 @@ impl Helper {
             }),
         );
 
-        let output_parse = Arc::clone(&process.lock().unwrap().output_parse);
-        let output_pub = Arc::clone(&process.lock().unwrap().output_pub);
-
         let client = client();
         let start = process.lock().unwrap().start;
         let api_uri_config = {
@@ -681,8 +678,6 @@ impl Helper {
                 let mut pub_api_lock = pub_api.lock().unwrap();
                 PubXmrigApi::update_from_output(
                     &mut pub_api_lock,
-                    &output_pub,
-                    &output_parse,
                     start.elapsed(),
                     &mut process_lock,
                     process_p2pool_lock,
@@ -835,8 +830,6 @@ impl PubXmrigApi {
     #[allow(clippy::too_many_arguments)]
     pub fn update_from_output(
         public: &mut Self,
-        output_parse: &Arc<Mutex<String>>,
-        output_pub: &Arc<Mutex<String>>,
         elapsed: std::time::Duration,
         process: &mut Process,
         process_p2pool: &Process,
@@ -847,7 +840,7 @@ impl PubXmrigApi {
         p2pool_state: &P2pool,
     ) {
         // 1. Take the process's current output buffer and combine it with Pub (if not empty)
-        let mut output_pub = output_pub.lock().unwrap();
+        let mut output_pub = process.output_pub.lock().unwrap();
 
         {
             if !output_pub.is_empty() {
@@ -858,7 +851,7 @@ impl PubXmrigApi {
         }
         drop(output_pub);
 
-        let mut output_parse = output_parse.lock().unwrap();
+        let mut output_parse = process.output_parse.lock().unwrap();
         // 2. Check for "new job"/"no active...".
         if XMRIG_REGEX.new_job.is_match(&output_parse) {
             process.state = ProcessState::Alive;
