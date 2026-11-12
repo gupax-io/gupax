@@ -333,6 +333,15 @@ impl ProcessName {
             ProcessName::Xvb => "",
         }
     }
+    pub const fn msg_binary_path_not_executable(&self) -> &str {
+        match self {
+            ProcessName::Node => NODE_PATH_NOT_EXECUTABLE,
+            ProcessName::P2pool => P2POOL_PATH_NOT_EXECUTABLE,
+            ProcessName::Xmrig => XMRIG_PATH_NOT_EXECUTABLE,
+            ProcessName::XmrigProxy => XMRIG_PROXY_PATH_NOT_EXECUTABLE,
+            ProcessName::Xvb => "",
+        }
+    }
     pub const fn msg_binary_path_ok(&self) -> &str {
         match self {
             ProcessName::Node => NODE_PATH_OK,
