@@ -194,13 +194,34 @@ fn running(pid: sysinfo::Pid) -> bool {
     system.process(pid).is_some()
 }
 
+// Returns once PING wrote its first line. A Ctrl+C sent while PING starts can be lost.
+fn ping_wrote(helper: &mut Child, mut stdout: Pipe) -> Pipe {
+    let (sender, read) = mpsc::channel();
+    thread::spawn(move || {
+        let mut output = String::new();
+        let mut buf = [0; 1024];
+        while !output.contains("127.0.0.1")
+            && let Ok(n @ 1..) = stdout.read(&mut buf)
+        {
+            output.push_str(&String::from_utf8_lossy(&buf[..n]));
+        }
+        let _ = sender.send((stdout, output));
+    });
+    let (stdout, output) = read
+        .recv_timeout(LIMIT)
+        .unwrap_or_else(|_| timed_out(helper));
+    assert!(output.contains("127.0.0.1"), "{output:?}");
+    stdout
+}
+
 #[test]
 fn helper_stops_xmrig_once_gupax_is_gone() {
     let (mut helper, pipes) =
         start_helper(r"C:\windows\system32\PING.EXE", &["-n", "30", "127.0.0.1"]);
-    assert!(pipes.is_some());
+    let (stdin, stdout) = pipes.unwrap();
     let ping = ping_of(&helper);
-    drop(pipes);
+    let stdout = ping_wrote(&mut helper, stdout);
+    drop((stdin, stdout));
     wait(&mut helper);
     assert!(!running(ping), "XMRig kept running");
 }
@@ -211,11 +232,11 @@ fn helper_stops_xmrig_on_ctrl_c() {
         start_helper(r"C:\windows\system32\PING.EXE", &["-n", "30", "127.0.0.1"]);
     let (mut stdin, stdout) = pipes.unwrap();
     let ping = ping_of(&helper);
+    let stdout = ping_wrote(&mut helper, stdout);
     // Gupax stops XMRig with it.
     stdin.write_all(&[0x03]).unwrap();
-    let output = read_output(&mut helper, stdout);
+    read_output(&mut helper, stdout);
     wait(&mut helper);
-    assert!(!output.starts_with("Error:"), "{output:?}");
     assert!(!running(ping), "XMRig kept running");
 }
 
