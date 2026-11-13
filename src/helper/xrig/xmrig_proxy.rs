@@ -826,6 +826,31 @@ mod tests {
         assert!(output[last..].contains("Exit status: [Failed]"), "{output}");
     }
 
+    // On Windows, XMRig-Proxy ends with its console, which Gupax holds.
+    #[cfg(unix)]
+    #[test]
+    fn xmrig_proxy_ends_once_gupax_is_gone() {
+        let process = not_alive(ProcessName::XmrigProxy);
+        crate::helper::play_gupax(&process, {
+            let process = Arc::clone(&process);
+            move |xmrig_proxy| {
+                let gui_api = arc_mut!(PubXmrigProxyApi::new());
+                watch(
+                    &process,
+                    &gui_api,
+                    &arc_mut!(PubXmrigProxyApi::new()),
+                    xmrig_proxy,
+                )
+            }
+        });
+        assert!(
+            crate::helper::ends_with_gupax(
+                "helper::xrig::xmrig_proxy::tests::xmrig_proxy_ends_once_gupax_is_gone"
+            ),
+            "XMRig-Proxy kept running"
+        );
+    }
+
     // Returns once the start of the watchdog cleared the signal of `process`.
     fn wait_start(process: &Mutex<Process>) {
         while process.lock().unwrap().signal != ProcessSignal::None {

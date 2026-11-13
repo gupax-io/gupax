@@ -634,7 +634,7 @@ pub enum CheckLocalOutsideNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::helper::{not_alive, shell};
+    use crate::helper::{ends_with_gupax, not_alive, play_gupax, shell};
     use crate::utils::macros::arc_mut;
     use std::path::PathBuf;
 
@@ -672,6 +672,19 @@ mod tests {
         let output = &gui_api.lock().unwrap().output;
         let last = output.find("last").expect(output);
         assert!(output[last..].contains("Exit status: [Failed]"), "{output}");
+    }
+
+    #[test]
+    fn the_node_ends_once_gupax_is_gone() {
+        let process = not_alive(ProcessName::Node);
+        play_gupax(&process, {
+            let process = Arc::clone(&process);
+            move |node| watch(&process, &arc_mut!(PubNodeApi::new()), node)
+        });
+        assert!(
+            ends_with_gupax("helper::node::tests::the_node_ends_once_gupax_is_gone"),
+            "the node kept running"
+        );
     }
 
     #[test]

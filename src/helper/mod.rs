@@ -1166,7 +1166,7 @@ async fn sleep_end_loop(now: Instant, name: impl Display) {
 // Takes `cmd`, whose copy of the output writer would keep the output open once the process exited.
 fn spawn_piped(
     mut cmd: std::process::Command,
-) -> std::io::Result<(Child, std::io::PipeWriter, std::io::PipeReader)> {
+) -> std::io::Result<(Child, Input, std::io::PipeReader)> {
     let (stdin_reader, stdin_writer) = std::io::pipe()?;
     let (stdout_reader, stdout_writer) = std::io::pipe()?;
     cmd.stderr(stdout_writer.try_clone()?);
@@ -1175,7 +1175,95 @@ fn spawn_piped(
         let program = cmd.get_program().display();
         std::io::Error::new(e.kind(), format!("{program}: {e}"))
     })?;
-    Ok((child, stdin_writer, stdout_reader))
+    let stdin = end_with_gupax(&child, stdin_writer);
+    Ok((child, stdin, stdout_reader))
+}
+
+// The input of a program that Gupax started.
+#[cfg(windows)]
+type Input = std::io::PipeWriter;
+
+// The input of a program that Gupax started. The program ends once Gupax is gone while this
+// input lives.
+#[cfg(unix)]
+struct Input {
+    writer: std::io::PipeWriter,
+    _watcher: Option<Watcher>,
+}
+
+#[cfg(unix)]
+impl std::io::Write for Input {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.writer.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
+}
+
+// A shell that asks a program to exit once Gupax is gone, crash included: its input then ends.
+#[cfg(unix)]
+struct Watcher {
+    shell: Child,
+    _gupax: std::io::PipeWriter,
+}
+
+#[cfg(unix)]
+impl Watcher {
+    fn of(program: &Child) -> std::io::Result<Self> {
+        let (gone, gupax) = std::io::pipe()?;
+        let shell = std::process::Command::new("/bin/sh")
+            .args(["-c", r#"read x; kill "$1""#, "sh"])
+            .arg(program.id().to_string())
+            .stdin(gone)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+        Ok(Self {
+            shell,
+            _gupax: gupax,
+        })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Watcher {
+    // Before its input closes: the PID of the program may belong to another process by then.
+    fn drop(&mut self) {
+        let _ = self.shell.kill();
+        let _ = self.shell.wait();
+    }
+}
+
+#[cfg(unix)]
+fn end_with_gupax(program: &Child, writer: std::io::PipeWriter) -> Input {
+    let watcher = Watcher::of(program)
+        .inspect_err(|e| warn!("Process {} | It would outlive Gupax: {e}", program.id()))
+        .ok();
+    Input {
+        writer,
+        _watcher: watcher,
+    }
+}
+
+#[cfg(windows)]
+fn end_with_gupax(program: &Child, writer: std::io::PipeWriter) -> Input {
+    use std::os::windows::io::AsRawHandle;
+    // Windows ends the processes of this job once Gupax, which holds it, is gone, crash included.
+    static JOB: std::sync::LazyLock<Result<win32job::Job, win32job::JobError>> =
+        std::sync::LazyLock::new(|| {
+            let mut limits = win32job::ExtendedLimitInfo::new();
+            limits.limit_kill_on_job_close();
+            win32job::Job::create_with_limit_info(&limits)
+        });
+    let assigned = JOB.as_ref().map_err(ToString::to_string).and_then(|job| {
+        job.assign_process(program.as_raw_handle() as isize)
+            .map_err(|e| e.to_string())
+    });
+    if let Err(e) = assigned {
+        warn!("Process {} | It would outlive Gupax: {e}", program.id());
+    }
+    writer
 }
 
 // A binary at the root has no folder, and then fails to start with the reason.
@@ -1257,4 +1345,85 @@ fn within<T: Send + 'static>(call: impl FnOnce() -> T + Send + 'static) -> T {
     returned
         .recv_timeout(Duration::from_secs(20))
         .expect("the call still waited after 20 s")
+}
+
+// What a test passes to itself to play Gupax in another process.
+#[cfg(test)]
+const PLAYS_GUPAX: &str = "GUPAX_TEST_PLAYS_GUPAX";
+
+// The process that the watchdog starts in `play_gupax`.
+#[cfg(all(test, windows))]
+const STAND_IN: &str = "cmd.exe";
+#[cfg(all(test, unix))]
+const STAND_IN: &str = "sleep";
+
+// When the test plays Gupax: runs `watch` on a program that outlives its pipes, as P2Pool
+// does, says when `process` started, then runs until it is killed.
+#[cfg(test)]
+fn play_gupax(
+    process: &Arc<Mutex<Process>>,
+    watch: impl FnOnce((PathBuf, Vec<String>)) + Send + 'static,
+) {
+    if std::env::var_os(PLAYS_GUPAX).is_none() {
+        return;
+    }
+    thread::spawn(move || watch(shell("ping -n 10 127.0.0.1 >nul", "exec sleep 10")));
+    while !process.lock().unwrap().is_alive() {
+        thread::sleep(Duration::from_millis(1));
+    }
+    println!("started");
+    thread::sleep(Duration::from_secs(20));
+    std::process::exit(0);
+}
+
+// Tells whether the program that `test` started as it played Gupax ended within 5 s of the
+// kill of this Gupax, which is how a crash ends it.
+#[cfg(test)]
+fn ends_with_gupax(test: &str) -> bool {
+    use std::io::BufRead;
+    let mut gupax = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env(PLAYS_GUPAX, "1")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut output = std::io::BufReader::new(gupax.stdout.take().unwrap()).lines();
+    assert!(
+        output.any(|line| line.unwrap() == "started"),
+        "Gupax started no program"
+    );
+    let gupax_pid = Pid::from_u32(gupax.id());
+    let waiting = Instant::now();
+    // The shell of a Unix stand-in takes a moment to become the program, and a listing keeps
+    // the name that a process had when it first listed it.
+    let (mut system, program) = loop {
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        let program = system.processes().values().find(|process| {
+            process.parent() == Some(gupax_pid) && process.name().eq_ignore_ascii_case(STAND_IN)
+        });
+        if let Some(program) = program.map(sysinfo::Process::pid) {
+            break (system, program);
+        }
+        assert!(waiting.elapsed() < Duration::from_secs(5), "no program");
+    };
+    gupax.kill().unwrap();
+    gupax.wait().unwrap();
+    let killed = Instant::now();
+    while killed.elapsed() < Duration::from_secs(5) {
+        system.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::Some(&[program]),
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        if system.process(program).is_none() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    false
 }

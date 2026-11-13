@@ -1644,21 +1644,20 @@ fn reset_data_p2pool(pub_api: &Arc<Mutex<PubP2poolApi>>, gui_api: &Arc<Mutex<Pub
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::helper::{not_alive, shell};
+    use crate::helper::{ends_with_gupax, not_alive, play_gupax, shell};
     use crate::utils::macros::arc_mut;
 
-    #[test]
-    fn last_lines_of_p2pool_come_before_its_exit_status() {
-        let gui_api = arc_mut!(PubP2poolApi::new());
-        let (path, args) = shell(
-            "echo first& <nul set /p =last& exit 1",
-            "echo first; printf last; exit 1",
-        );
+    // Runs the watchdog of `process` until P2Pool ends.
+    fn watch(
+        process: Arc<Mutex<Process>>,
+        gui_api: &Arc<Mutex<PubP2poolApi>>,
+        (path, args): (std::path::PathBuf, Vec<String>),
+    ) {
         // Its API files are in a temporary folder.
         let dir = tempfile::tempdir().unwrap();
         Helper::spawn_p2pool_watchdog(
-            not_alive(ProcessName::P2pool),
-            Arc::clone(&gui_api),
+            process,
+            Arc::clone(gui_api),
             arc_mut!(PubP2poolApi::new()),
             args,
             path,
@@ -1673,8 +1672,34 @@ mod tests {
                 zmq: String::new(),
             },
         );
+    }
+
+    #[test]
+    fn last_lines_of_p2pool_come_before_its_exit_status() {
+        let gui_api = arc_mut!(PubP2poolApi::new());
+        watch(
+            not_alive(ProcessName::P2pool),
+            &gui_api,
+            shell(
+                "echo first& <nul set /p =last& exit 1",
+                "echo first; printf last; exit 1",
+            ),
+        );
         let output = &gui_api.lock().unwrap().output;
         let last = output.find("last").expect(output);
         assert!(output[last..].contains("Exit status: [Failed]"), "{output}");
+    }
+
+    #[test]
+    fn p2pool_ends_once_gupax_is_gone() {
+        let process = not_alive(ProcessName::P2pool);
+        play_gupax(&process, {
+            let process = Arc::clone(&process);
+            move |p2pool| watch(process, &arc_mut!(PubP2poolApi::new()), p2pool)
+        });
+        assert!(
+            ends_with_gupax("helper::p2pool::tests::p2pool_ends_once_gupax_is_gone"),
+            "P2Pool kept running"
+        );
     }
 }
