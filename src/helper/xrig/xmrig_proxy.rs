@@ -399,6 +399,9 @@ impl Helper {
         ) else {
             return;
         };
+        // XMRig-Proxy runs on once its pipes are closed. On Windows, it ends with its console.
+        #[cfg(not(target_os = "windows"))]
+        let stdin_writer = crate::helper::end_with_gupax(&child, stdin_writer);
         #[cfg(not(target_os = "windows"))]
         let mut child_pty = child;
         #[cfg(target_os = "windows")]
@@ -824,6 +827,31 @@ mod tests {
         let output = &gui_api.lock().unwrap().output;
         let last = output.find("last").expect(output);
         assert!(output[last..].contains("Exit status: [Failed]"), "{output}");
+    }
+
+    // On Windows, XMRig-Proxy ends with its console, which Gupax holds.
+    #[cfg(unix)]
+    #[test]
+    fn xmrig_proxy_ends_once_gupax_is_gone() {
+        let process = not_alive(ProcessName::XmrigProxy);
+        crate::helper::play_gupax(&process, {
+            let process = Arc::clone(&process);
+            move |xmrig_proxy| {
+                let gui_api = arc_mut!(PubXmrigProxyApi::new());
+                watch(
+                    &process,
+                    &gui_api,
+                    &arc_mut!(PubXmrigProxyApi::new()),
+                    xmrig_proxy,
+                )
+            }
+        });
+        assert!(
+            crate::helper::ends_with_gupax(
+                "helper::xrig::xmrig_proxy::tests::xmrig_proxy_ends_once_gupax_is_gone"
+            ),
+            "XMRig-Proxy kept running"
+        );
     }
 
     // Returns once the start of the watchdog cleared the signal of `process`.

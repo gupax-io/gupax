@@ -163,6 +163,7 @@ elevated-helper = {git="https://github.com/Cyrix126/elevated-helper"}
 uuid = "1.22"
 conpty = "0.7"
 shell-escape = "0.1.5"
+win32job = "2.1.0"
 
 # Frees the pseudo console of a program that did not start.
 [patch.crates-io]

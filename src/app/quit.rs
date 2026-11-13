@@ -281,7 +281,7 @@ impl ShutdownWait {
                 sleep!(100);
             }
             if process.lock().unwrap().is_alive() {
-                error!("Shutdown | {name} did not stop in time, leaving it running");
+                error!("Shutdown | {name} did not stop in time, exiting without waiting for it");
             }
         }
     }

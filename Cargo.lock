@@ -3315,6 +3315,7 @@ dependencies = [
  "tray-icon",
  "uuid",
  "walkdir",
+ "win32job",
  "windows 0.62.2",
  "winit",
  "winres",
@@ -8448,6 +8449,16 @@ name = "widestring"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
+
+[[package]]
+name = "win32job"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21b25acac91041257d64f5625690b626133e0ca9e4e17814552b5803b1a82f7c"
+dependencies = [
+ "thiserror 1.0.69",
+ "windows 0.62.2",
+]
 
 [[package]]
 name = "winapi"
