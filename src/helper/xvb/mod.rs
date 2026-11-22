@@ -400,7 +400,18 @@ impl Helper {
                                 }
                                 let hashrate = hashrate_provider.current_controllable_hr();
                                 let difficulty_data_is_ready = gui_api_p2pool.lock().unwrap().p2pool_difficulty_u64 > 100_000;
-                                    if (first_loop || *retry.lock().unwrap()|| is_algo_finished) && hashrate > 0.0 && process.lock().unwrap().state == ProcessState::Alive && difficulty_data_is_ready && pub_api.lock().unwrap().stats_priv.pool != Pool::Unknown
+                                let due = first_loop || *retry.lock().unwrap() || is_algo_finished;
+                                let running = run_in_progress(handle_algo.lock().unwrap().as_ref());
+                                let next_run = RunConditions {
+                                    due,
+                                    running,
+                                    alive: process.lock().unwrap().state == ProcessState::Alive,
+                                    hashrate,
+                                    difficulty_ready: difficulty_data_is_ready,
+                                    pool_known: pub_api.lock().unwrap().stats_priv.pool != Pool::Unknown,
+                                }
+                                .next_run();
+                                    if next_run == NextRun::Start
                                     {
                                         // if algo was started, it must not retry next loop.
                                         *retry.lock().unwrap() = false;
@@ -412,12 +423,8 @@ impl Helper {
                         algorithm.run(&gui_api).await;
                         info!("Done running algorithm");
                                         })));
-                                    } else {
-                                        // if xmrig is still at 0 HR but is alive and algorithm is skipped, recheck first 10s of xmrig inside algorithm next time (in one minute). Don't check if algo failed to start because state was not alive after getting private stats.
-
-                                        if (hashrate == 0.0 || !difficulty_data_is_ready) && process.lock().unwrap().state == ProcessState::Alive {
-                                            *retry.lock().unwrap() = true
-                                        }
+                                    } else if next_run == NextRun::Retry {
+                                        *retry.lock().unwrap() = true
                                     }
 
                                 }
@@ -947,5 +954,162 @@ fn update_indicator_algo(
         // if algo is not running or process not alive
         pub_api.lock().unwrap().stats_priv.time_switch_pool = 0;
         pub_api.lock().unwrap().stats_priv.msg_indicator = "Algorithm is not running".to_string();
+    }
+}
+
+fn run_in_progress(run: Option<&JoinHandle<()>>) -> bool {
+    run.is_some_and(|run| !run.is_finished())
+}
+
+struct RunConditions {
+    // A stats refresh can be older than a change of the hashrate provider.
+    due: bool,
+    running: bool,
+    alive: bool,
+    hashrate: f32,
+    difficulty_ready: bool,
+    pool_known: bool,
+}
+
+#[derive(Debug, PartialEq)]
+enum NextRun {
+    Start,
+    // The next pass asks again.
+    Retry,
+    Wait,
+}
+
+impl RunConditions {
+    fn next_run(&self) -> NextRun {
+        if self.running || !self.alive {
+            NextRun::Wait
+        } else if self.hashrate == 0.0 || !self.difficulty_ready {
+            NextRun::Retry
+        } else if self.due && self.pool_known {
+            NextRun::Start
+        } else {
+            NextRun::Wait
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const READY: RunConditions = RunConditions {
+        due: true,
+        running: false,
+        alive: true,
+        hashrate: 1000.0,
+        difficulty_ready: true,
+        pool_known: true,
+    };
+
+    #[test]
+    fn an_xvb_run_starts_once_everything_is_ready() {
+        assert_eq!(READY.next_run(), NextRun::Start);
+    }
+
+    #[test]
+    fn a_stats_refresh_starts_no_xvb_run() {
+        let conditions = RunConditions {
+            due: false,
+            ..READY
+        };
+        assert_eq!(conditions.next_run(), NextRun::Wait);
+    }
+
+    #[test]
+    fn an_xvb_run_waiting_for_the_hashrate_is_tried_again_at_the_next_pass() {
+        let conditions = RunConditions {
+            hashrate: 0.0,
+            ..READY
+        };
+        assert_eq!(conditions.next_run(), NextRun::Retry);
+    }
+
+    #[test]
+    fn an_xvb_run_waiting_for_the_p2pool_difficulty_is_tried_again_at_the_next_pass() {
+        let conditions = RunConditions {
+            difficulty_ready: false,
+            ..READY
+        };
+        assert_eq!(conditions.next_run(), NextRun::Retry);
+    }
+
+    #[test]
+    fn the_xvb_run_is_tried_again_when_a_stats_refresh_finds_no_hashrate() {
+        let conditions = RunConditions {
+            due: false,
+            hashrate: 0.0,
+            ..READY
+        };
+        assert_eq!(conditions.next_run(), NextRun::Retry);
+    }
+
+    #[test]
+    fn an_xvb_run_stays_the_only_one_when_the_hashrate_drops_to_zero() {
+        let conditions = RunConditions {
+            running: true,
+            hashrate: 0.0,
+            ..READY
+        };
+        assert_eq!(conditions.next_run(), NextRun::Wait);
+    }
+
+    #[test]
+    fn no_second_xvb_run_starts_while_one_runs() {
+        let conditions = RunConditions {
+            running: true,
+            ..READY
+        };
+        assert_eq!(conditions.next_run(), NextRun::Wait);
+    }
+
+    #[test]
+    fn no_xvb_run_starts_while_xvb_is_not_alive() {
+        let conditions = RunConditions {
+            alive: false,
+            ..READY
+        };
+        assert_eq!(conditions.next_run(), NextRun::Wait);
+    }
+
+    #[test]
+    fn no_xvb_run_is_tried_again_while_xvb_is_not_alive() {
+        let conditions = RunConditions {
+            alive: false,
+            hashrate: 0.0,
+            ..READY
+        };
+        assert_eq!(conditions.next_run(), NextRun::Wait);
+    }
+
+    #[test]
+    fn no_xvb_run_starts_before_an_xvb_pool_is_chosen() {
+        let conditions = RunConditions {
+            pool_known: false,
+            ..READY
+        };
+        assert_eq!(conditions.next_run(), NextRun::Wait);
+    }
+
+    #[test]
+    fn no_xvb_run_is_in_progress_before_the_first_one() {
+        assert!(!run_in_progress(None));
+    }
+
+    #[tokio::test]
+    async fn an_unfinished_xvb_run_is_in_progress() {
+        let run = tokio::spawn(std::future::pending());
+        assert!(run_in_progress(Some(&run)));
+    }
+
+    #[tokio::test]
+    async fn a_finished_xvb_run_is_no_longer_in_progress() {
+        let mut run = tokio::spawn(async {});
+        (&mut run).await.unwrap();
+        assert!(!run_in_progress(Some(&run)));
     }
 }
