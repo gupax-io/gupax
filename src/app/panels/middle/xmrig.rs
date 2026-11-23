@@ -58,8 +58,12 @@ impl Xmrig {
         debug!("XMRig Tab | Rendering [Console]");
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.group(|ui| {
-                let text = &api.lock().unwrap().output;
-                console(ui, text, &mut self.console_height, ProcessName::Xmrig);
+                console(
+                    ui,
+                    &api.lock().unwrap().output,
+                    &mut self.console_height,
+                    ProcessName::Xmrig,
+                );
                 if !self.simple {
                     ui.separator();
                     input_args_field(

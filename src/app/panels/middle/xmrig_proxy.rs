@@ -67,8 +67,12 @@ impl XmrigProxy {
         debug!("Xmrig-Proxy Tab | Rendering [Console]");
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.group(|ui| {
-                let text = &api.lock().unwrap().output;
-                console(ui, text, &mut self.console_height, ProcessName::XmrigProxy);
+                console(
+                    ui,
+                    &api.lock().unwrap().output,
+                    &mut self.console_height,
+                    ProcessName::XmrigProxy,
+                );
                 //---------------------------------------------------------------------------------------------------- [Advanced] Console
                 if !self.simple {
                     ui.separator();

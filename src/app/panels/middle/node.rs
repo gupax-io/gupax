@@ -57,9 +57,13 @@ impl Node {
         // console output for log
         debug!("Node Tab | Rendering [Console]");
         egui::ScrollArea::vertical().show(ui, |ui| {
-            let text = &api.lock().unwrap().output;
             ui.group(|ui| {
-                console(ui, text, &mut self.console_height, ProcessName::Node);
+                console(
+                    ui,
+                    &api.lock().unwrap().output,
+                    &mut self.console_height,
+                    ProcessName::Node,
+                );
                 if !self.simple {
                     ui.separator();
                     input_args_field(
