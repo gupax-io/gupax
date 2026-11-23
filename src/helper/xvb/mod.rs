@@ -295,6 +295,7 @@ impl Helper {
                     process_p2pool,
                     &mut first_loop,
                     &handle_algo,
+                    &handle_request,
                     state_p2pool,
                     xp_alive,
                     xmrig_img,
@@ -622,6 +623,7 @@ async fn check_state_outcauses_xvb(
     process_p2pool: &Arc<Mutex<Process>>,
     first_loop: &mut bool,
     handle_algo: &Arc<Mutex<Option<JoinHandle<()>>>>,
+    handle_request: &Arc<Mutex<Option<JoinHandle<()>>>>,
     state_p2pool: &crate::disk::state::P2pool,
     xp_start_alive: bool,
     xmrig_img: &Arc<Mutex<ImgXmrig>>,
@@ -700,6 +702,10 @@ async fn check_state_outcauses_xvb(
     }
     // if state of Xmrig-Proxy changed, go back to first loop
     if xp_start_alive != xp_is_alive {
+        // The request keeps the hashrate provider it was sent with.
+        if let Some(request) = handle_request.lock().unwrap().as_ref() {
+            request.abort();
+        }
         *first_loop = true;
         return true;
     }
@@ -996,6 +1002,7 @@ impl RunConditions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     const READY: RunConditions = RunConditions {
         due: true,
@@ -1111,5 +1118,48 @@ mod tests {
         let mut run = tokio::spawn(async {});
         (&mut run).await.unwrap();
         assert!(!run_in_progress(Some(&run)));
+    }
+
+    #[tokio::test]
+    async fn an_xmrig_proxy_change_cancels_the_xvb_request_in_flight() {
+        let process = |name| {
+            Arc::new(Mutex::new(Process::new(
+                name,
+                String::new(),
+                PathBuf::new(),
+            )))
+        };
+        let xmrig_img = Arc::new(Mutex::new(ImgXmrig::new()));
+        let client = client();
+        let provider = HashrateProvider::Xmrig(
+            Arc::new(Mutex::new(PubXmrigApi::new())),
+            xmrig_img.clone(),
+            client.clone(),
+        );
+        let request = Arc::new(Mutex::new(Some(tokio::spawn(std::future::pending()))));
+
+        check_state_outcauses_xvb(
+            &client,
+            &Arc::new(Mutex::new(PubXvbApi::new())),
+            &Arc::new(Mutex::new(PubXvbApi::new())),
+            &process(ProcessName::Xvb),
+            &process(ProcessName::Xmrig),
+            &process(ProcessName::XmrigProxy),
+            &process(ProcessName::P2pool),
+            &mut false,
+            &Arc::new(Mutex::new(None)),
+            &request,
+            &crate::disk::state::P2pool::default(),
+            true,
+            &xmrig_img,
+            &Arc::new(Mutex::new(ImgProxy::new())),
+            &Arc::new(Mutex::new(ImgP2pool::default())),
+            &provider,
+        )
+        .await;
+
+        let request = request.lock().unwrap().take().unwrap();
+        let joined = tokio::time::timeout(Duration::from_secs(1), request).await;
+        assert!(joined.unwrap().unwrap_err().is_cancelled());
     }
 }
